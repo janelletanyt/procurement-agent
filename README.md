@@ -33,22 +33,42 @@ Business profile + keywords + portals
    Results table  ──►  Claude  ──►  Expression of Interest draft
 ```
 
-- **Sourcing** – One call to the Anthropic Messages API with the `web_search` tool. Claude runs several searches and returns a JSON array of tenders. If the response is cut off, complete records are salvaged from the partial output.
+- **Sourcing** – One request to the Anthropic Messages API (through `api/messages.js`) with the `web_search` tool. Claude runs several searches and returns a JSON array of tenders. If the response is cut off, complete records are salvaged from the partial output.
 - **Scoring** – Claude assigns each tender a relevance score and a short justification based on the business profile.
 - **Real results only** – Claude is told not to fabricate tenders, and anything it marks as simulated is removed before display.
 - **Drafting** – A second Claude call writes the Expression of Interest in a formal Singapore business tone.
 
 ## Running it
 
-The component calls `https://api.anthropic.com/v1/messages` directly from the browser and does not include an API key, so it is designed to run **as a Claude artifact**, where the API call is handled for you:
+The repo is a small Vite + React app with one serverless function, ready to deploy on [Vercel](https://vercel.com):
 
-1. Open [claude.ai](https://claude.ai) and start a chat.
-2. Paste the contents of `procurement-agent.jsx` and ask Claude to render it as an artifact.
-3. Edit the business profile, then click **Run Procurement Agent**.
+| File | Purpose |
+|---|---|
+| `procurement-agent.jsx` | The whole user interface and agent logic |
+| `api/messages.js` | Server function that forwards requests to the Anthropic API. It keeps the API key on the server and rejects callers without the access code |
+| `src/main.jsx`, `index.html` | App entry point |
 
-To run it in your own React app instead, route the two `fetch` calls through a small backend that adds your Anthropic API key. Do not put an API key in browser code.
+### Deploy on Vercel
 
-The only dependency is React (`useState`, `useRef`, `useEffect`). Styling is inline; fonts load from Google Fonts.
+1. Import this repository as a new Vercel project (the Vite preset is detected automatically).
+2. Add two environment variables under **Settings → Environment Variables**:
+   - `ANTHROPIC_API_KEY` – an Anthropic API key from [platform.claude.com](https://platform.claude.com)
+   - `ACCESS_CODE` – any code you choose; visitors must enter it on the Configure tab before the agent will run
+3. Deploy. Optionally set `ANTHROPIC_MODEL` to change the Claude model (default `claude-sonnet-5-5`).
+
+Every run is billed to the API key's account, so share the access code only with people you trust.
+
+### Run locally
+
+```bash
+npm install
+```
+
+```bash
+npx vercel dev
+```
+
+`vercel dev` serves both the app and the `/api/messages` function; put the two environment variables in a `.env` file (already git-ignored).
 
 ## Limitations
 
@@ -62,4 +82,4 @@ The only dependency is React (`useState`, `useRef`, `useEffect`). Styling is inl
 - `BUSINESS_PROFILE` – the default company description.
 - `PORTALS` – the list of portals shown on the Configure tab.
 - `systemPrompt` / `userMsg` inside `runAgent` – the search instructions and output schema.
-- The `model` field in both `fetch` calls – which Claude model is used.
+- `ANTHROPIC_MODEL` environment variable – which Claude model is used.
