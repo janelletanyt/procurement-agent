@@ -1,73 +1,202 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 
 const BUSINESS_PROFILE = "We are a Singapore registered ecommerce company selling IT peripherals such as VR headsets, AI-ready workstations, and in-demand tech gadgets. We serve SMEs and government agencies, with access to most procurement portals in Singapore.";
 
 const PORTALS = [
-  { id:"gebiz",       name:"GeBIZ",                flag:"🏛️", type:"Government",      desc:"Central gov tender portal" },
-  { id:"govtech",     name:"GovTech Procurement",   flag:"💻", type:"Government",      desc:"ICT & digital tenders" },
-  { id:"sentinel",    name:"Sentinel Portal",       flag:"🛡️", type:"Government",      desc:"MINDEF/SAF procurement" },
-  { id:"hdb",         name:"HDB eBidding",          flag:"🏗️", type:"Statutory Board", desc:"HDB supply contracts" },
-  { id:"jtc",         name:"JTC Procurement",       flag:"🏭", type:"Statutory Board", desc:"Industrial estate supplies" },
-  { id:"sla",         name:"SLA / Quartz",          flag:"📐", type:"Statutory Board", desc:"Land authority contracts" },
-  { id:"caas",        name:"CAAS / Changi",         flag:"✈️", type:"Statutory Board", desc:"Aviation supplies & services" },
-  { id:"ariba_sg",    name:"Ariba SG",              flag:"🏢", type:"Corporate",       desc:"DBS, OCBC, Singtel, etc." },
-  { id:"tenderboard", name:"Tenderboard",           flag:"📋", type:"Corporate",       desc:"SG tender aggregator & alerts" },
-  { id:"sesami",      name:"Sesami",                flag:"🔓", type:"Corporate",       desc:"SME-focused procurement platform" },
-  { id:"sgh",         name:"SingHealth / NHG",      flag:"🏥", type:"Healthcare",      desc:"Hospital & healthcare supplies" },
-  { id:"ntu",         name:"NTU / NUS Procurement", flag:"🎓", type:"Education",       desc:"University procurement" },
+  { id:"gebiz",       name:"GeBIZ",                 type:"Government",      desc:"Central government tenders" },
+  { id:"govtech",     name:"GovTech Procurement",   type:"Government",      desc:"ICT and digital tenders" },
+  { id:"sentinel",    name:"Sentinel Portal",       type:"Government",      desc:"MINDEF / SAF procurement" },
+  { id:"hdb",         name:"HDB eBidding",          type:"Statutory Board", desc:"HDB supply contracts" },
+  { id:"jtc",         name:"JTC Procurement",       type:"Statutory Board", desc:"Industrial estate supplies" },
+  { id:"sla",         name:"SLA / Quartz",          type:"Statutory Board", desc:"Land authority contracts" },
+  { id:"caas",        name:"CAAS / Changi",         type:"Statutory Board", desc:"Aviation supplies and services" },
+  { id:"ariba_sg",    name:"Ariba SG",              type:"Corporate",       desc:"DBS, OCBC, Singtel and others" },
+  { id:"tenderboard", name:"Tenderboard",           type:"Corporate",       desc:"Tender aggregator and alerts" },
+  { id:"sesami",      name:"Sesami",                type:"Corporate",       desc:"SME-focused procurement" },
+  { id:"sgh",         name:"SingHealth / NHG",      type:"Healthcare",      desc:"Hospital and healthcare supplies" },
+  { id:"ntu",         name:"NTU / NUS Procurement", type:"Education",       desc:"University procurement" },
 ];
 
+const CATEGORIES = ["IT Hardware & Software","Office Supplies","Corporate Gifting","Medical & Healthcare","Apparel & PPE","Retail & FMCG","Logistics & Fulfilment"];
 
-const NAV = [
-  { id:"configure", icon:"⚙", label:"Configure" },
-  { id:"run",       icon:"▶", label:"Agent Log" },
-  { id:"results",   icon:"◈", label:"Results" },
-  { id:"draft",     icon:"✦", label:"Bid Draft" },
+const TABS = [
+  { id:"configure", label:"Search setup" },
+  { id:"run",       label:"Activity" },
+  { id:"results",   label:"Opportunities" },
+  { id:"draft",     label:"Draft" },
 ];
 
-const C = { teal:"#2dd4bf", green:"#10b981", amber:"#f59e0b", red:"#ef4444", purple:"#a78bfa" };
+const STEPS = [
+  { id:"preparing", label:"Prepare" },
+  { id:"searching", label:"Search and score" },
+  { id:"done",      label:"Complete" },
+];
 
-function Badge({ children, color = C.teal }) {
-  return (
-    <span style={{ display:"inline-flex", alignItems:"center", padding:"2px 9px", borderRadius:4, fontSize:11, fontWeight:600, background:`${color}18`, color, border:`1px solid ${color}28`, letterSpacing:"0.02em", whiteSpace:"nowrap" }}>
-      {children}
-    </span>
-  );
+const HIGH_MATCH = 85;
+const CLOSING_SOON_DAYS = 14;
+
+const CSS = `
+.pa{
+  --bg:#f6f6f4; --surface:#ffffff; --border:#e3e3de; --hover:#f3f3f0;
+  --text:#15171a; --muted:#646a73; --subtle:#9a9fa7; --ring:rgba(21,23,26,.12);
+  --good:#0f766e; --warn:#a16207; --bad:#b42318;
+  min-height:100vh; background:var(--bg); color:var(--text);
+  font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
 }
-
-function RelevanceBar({ score }) {
-  const color = score >= 85 ? C.teal : score >= 70 ? C.amber : C.red;
-  return (
-    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-      <div style={{ flex:1, height:3, background:"#132030", borderRadius:2, overflow:"hidden" }}>
-        <div style={{ width:`${score}%`, height:"100%", background:color, borderRadius:2, transition:"width 1.2s ease" }} />
-      </div>
-      <span style={{ fontSize:11, fontWeight:700, color, width:34, textAlign:"right", fontFamily:"'DM Mono',monospace" }}>{score}%</span>
-    </div>
-  );
+@media (prefers-color-scheme:dark){
+  .pa{
+    --bg:#0d0f12; --surface:#14171b; --border:#252a31; --hover:#1a1e23;
+    --text:#e8eaed; --muted:#9aa1ab; --subtle:#6b727c; --ring:rgba(232,234,237,.16);
+    --good:#5fd4c4; --warn:#e3b341; --bad:#ff8a7a;
+  }
 }
+.pa *,.pa *::before,.pa *::after{box-sizing:border-box}
+.pa h1,.pa h2,.pa p{margin:0}
+.pa button,.pa input,.pa select,.pa textarea{font:inherit;color:inherit}
+.pa :focus-visible{outline:2px solid var(--text);outline-offset:2px}
+.pa .num{font-variant-numeric:tabular-nums;white-space:nowrap}
 
-function TypingText({ text, speed = 8 }) {
-  const [displayed, setDisplayed] = useState("");
-  const [done, setDone] = useState(false);
-  useEffect(() => {
-    setDisplayed(""); setDone(false);
-    let i = 0;
-    const iv = setInterval(() => { i++; setDisplayed(text.slice(0, i)); if (i >= text.length) { clearInterval(iv); setDone(true); } }, speed);
-    return () => clearInterval(iv);
-  }, [text]);
-  return <span>{displayed}{!done && <span style={{ animation:"blink 1s infinite", opacity:0.5 }}>▍</span>}</span>;
+.pa-top{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--border)}
+.pa-top-in{max-width:1120px;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:32px;min-height:56px;flex-wrap:wrap}
+.pa-brand{font-size:13px;font-weight:650;letter-spacing:.08em;white-space:nowrap}
+.pa-brand span{font-weight:400;letter-spacing:0;color:var(--muted);margin-left:10px}
+.pa-nav{display:flex;gap:24px;flex:1;overflow-x:auto;scrollbar-width:none}
+.pa-nav::-webkit-scrollbar{display:none}
+.pa-tab{background:none;border:0;border-bottom:2px solid transparent;padding:18px 0 16px;color:var(--muted);cursor:pointer;white-space:nowrap;font-size:13.5px}
+.pa-tab:hover{color:var(--text)}
+.pa-tab[aria-current="page"]{color:var(--text);border-bottom-color:var(--text);font-weight:500}
+.pa-count{margin-left:6px;font-size:11.5px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:0 7px}
+.pa-status{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);white-space:nowrap}
+.pa-dot{width:7px;height:7px;border-radius:50%;background:var(--subtle)}
+.pa-dot.run{background:var(--warn);animation:pa-pulse 1.4s ease-in-out infinite}
+.pa-dot.ok{background:var(--good)}
+@keyframes pa-pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.pa-dot.run{animation:none}}
+
+.pa-main{max-width:1120px;margin:0 auto;padding:40px 24px 72px}
+.pa-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:28px}
+.pa-head h1{font-size:24px;font-weight:600;letter-spacing:-.015em;line-height:1.25}
+.pa-head p{color:var(--muted);margin-top:4px}
+.pa-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+.pa-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden}
+.pa-card-h{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 20px;border-bottom:1px solid var(--border)}
+.pa-card-h h2{font-size:13px;font-weight:600}
+.pa-card-b{padding:20px}
+.pa-narrow{max-width:820px}
+
+.pa-lab{display:block;font-size:12.5px;font-weight:500;color:var(--muted);margin-bottom:6px}
+.pa-in{width:100%;padding:9px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;outline:none;transition:border-color .15s,box-shadow .15s}
+.pa-in::placeholder{color:var(--subtle)}
+.pa-in:focus{border-color:var(--text);box-shadow:0 0 0 3px var(--ring)}
+textarea.pa-in{resize:vertical;line-height:1.65;display:block}
+.pa-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pa-hint{font-size:12.5px;color:var(--muted)}
+
+.pa-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;color:var(--text);white-space:nowrap;transition:border-color .15s,opacity .15s}
+.pa-btn:hover:not(:disabled){border-color:var(--muted)}
+.pa-btn:disabled{opacity:.4;cursor:not-allowed}
+.pa-btn.primary{background:var(--text);border-color:var(--text);color:var(--bg)}
+.pa-btn.primary:hover:not(:disabled){opacity:.86}
+.pa-btn.sm{height:30px;padding:0 10px;font-size:12.5px}
+.pa-link{background:none;border:0;padding:0;color:var(--muted);font-size:12.5px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.pa-link:hover{color:var(--text)}
+
+.pa-ptype{font-size:12px;font-weight:500;color:var(--muted);margin:0 0 8px}
+.pa-pgroup + .pa-pgroup{margin-top:20px}
+.pa-pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px}
+.pa-pitem{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer}
+.pa-pitem:hover{background:var(--hover)}
+.pa-pitem input{margin:3px 0 0;accent-color:var(--text)}
+.pa-pitem b{display:block;font-weight:500}
+.pa-pitem small{display:block;font-size:12px;color:var(--muted)}
+
+.pa-steps{display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;color:var(--subtle)}
+.pa-step{display:flex;align-items:center;gap:8px}
+.pa-step i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid currentColor;border-radius:50%;font-size:11px}
+.pa-step.on{color:var(--text);font-weight:500}
+.pa-step.past{color:var(--good)}
+.pa-log{padding:16px 20px;min-height:280px;max-height:460px;overflow:auto;font:12.5px/1.9 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted)}
+.pa-log time{color:var(--subtle);margin-right:14px}
+.pa-log .ok{color:var(--good)}
+.pa-log .warn{color:var(--warn)}
+.pa-log .strong{color:var(--text)}
+
+.pa-banner{border:1px solid var(--border);border-left:3px solid var(--bad);background:var(--surface);border-radius:6px;padding:12px 16px;margin-bottom:16px}
+.pa-banner b{font-weight:600}
+
+.pa-stats{display:grid;grid-template-columns:repeat(4,1fr)}
+.pa-stat{padding:18px 20px;border-left:1px solid var(--border)}
+.pa-stat:first-child{border-left:0}
+.pa-stat span{display:block;font-size:12.5px;color:var(--muted)}
+.pa-stat b{display:block;font-size:22px;font-weight:600;letter-spacing:-.01em;margin-top:2px}
+
+.pa-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.pa-toolbar select{width:auto;padding:5px 10px;font-size:13px}
+.pa-tablewrap{overflow-x:auto}
+.pa-table{width:100%;border-collapse:collapse}
+.pa-table th{text-align:left;font-size:12px;font-weight:500;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--border);white-space:nowrap}
+.pa-table th button{background:none;border:0;padding:0;font-size:12px;font-weight:500;color:var(--muted);cursor:pointer}
+.pa-table th button:hover,.pa-table th[aria-sort] button{color:var(--text)}
+.pa-table td{padding:14px 16px;border-bottom:1px solid var(--border);vertical-align:top}
+.pa-table tbody tr:last-child td{border-bottom:0}
+.pa-row{cursor:pointer}
+.pa-row:hover,.pa-row.open{background:var(--hover)}
+.pa-title{font-weight:500;line-height:1.4}
+.pa-sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+.pa-urgent{color:var(--bad)}
+.pa-match{display:flex;align-items:center;gap:10px}
+.pa-bar{width:56px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;flex-shrink:0}
+.pa-bar i{display:block;height:100%;background:var(--text)}
+.pa-rowact{display:flex;gap:6px;justify-content:flex-end}
+.pa-detail td{background:var(--bg);padding:20px 16px 24px}
+.pa-detail-grid{display:grid;grid-template-columns:1fr 240px;gap:32px}
+.pa-detail p{line-height:1.7;max-width:70ch}
+.pa-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px;margin:0}
+.pa-dl dt{color:var(--muted)}
+.pa-dl dd{margin:0;word-break:break-word}
+.pa-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+.pa-pill{font-size:11.5px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:1px 9px;white-space:nowrap}
+.pa-note{font-size:12.5px;color:var(--muted);margin-top:14px;max-width:80ch}
+
+.pa-empty{padding:64px 24px;text-align:center}
+.pa-empty b{display:block;font-size:15px;font-weight:600;margin-bottom:6px}
+.pa-empty p{color:var(--muted);max-width:52ch;margin:0 auto 20px}
+.pa-draft{min-height:340px;border:0;border-radius:0;padding:20px;line-height:1.75}
+.pa-draft:focus{box-shadow:none}
+.pa-foot{max-width:1120px;margin:0 auto;padding:0 24px 32px;font-size:12px;color:var(--subtle)}
+
+@media (max-width:760px){
+  .pa-top-in{gap:0 20px;padding-top:10px}
+  .pa-nav{order:3;flex-basis:100%}
+  .pa-status{margin-left:auto}
+  .pa-main{padding:28px 16px 56px}
+  .pa-grid3{grid-template-columns:1fr}
+  .pa-stats{grid-template-columns:repeat(2,1fr)}
+  .pa-stat:nth-child(3){border-left:0}
+  .pa-stat:nth-child(n+3){border-top:1px solid var(--border)}
+  .pa-hide-sm,.pa-bar{display:none}
+  .pa-table th,.pa-table td{padding:12px 10px}
+  .pa-table th:first-child,.pa-table td:first-child{padding-left:16px}
+  .pa-table th:last-child,.pa-table td:last-child{padding-right:16px}
+  .pa-detail-grid{grid-template-columns:1fr;gap:20px}
 }
+`;
 
-function StatCard({ label, value, sub, color = C.teal, icon }) {
-  return (
-    <div style={{ background:"#08121f", border:"1px solid #142033", borderRadius:10, padding:"18px 20px", flex:1, position:"relative", overflow:"hidden" }}>
-      <div style={{ position:"absolute", top:0, left:0, width:3, height:"100%", background:color, borderRadius:"10px 0 0 10px" }} />
-      <div style={{ fontSize:10, fontWeight:600, color:"#3d5a78", textTransform:"uppercase", letterSpacing:"0.12em", marginBottom:10 }}>{label}</div>
-      <div style={{ fontSize:26, fontWeight:800, color, fontFamily:"'Syne',sans-serif", lineHeight:1, marginBottom:6 }}>{value}</div>
-      {sub && <div style={{ fontSize:11, color:"#3d5a78" }}>{sub}</div>}
-    </div>
-  );
+const fmtMoney = n => (Number(n) > 0 ? `S$${Number(n).toLocaleString("en-SG")}` : "Not stated");
+const daysLeft = d => { const t = Date.parse(d); return Number.isNaN(t) ? null : Math.ceil((t - Date.now()) / 86400000); };
+const safeUrl = u => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);
+
+function downloadCsv(rows) {
+  const cols = ["title","agency","portal","refNo","category","budget","deadline","relevance","aiReason","sourceUrl"];
+  const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [cols.join(","), ...rows.map(r => cols.map(c => cell(r[c])).join(","))].join("\r\n");
+  const url = URL.createObjectURL(new Blob(["﻿" + csv], { type:"text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = `opportunities-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function GeekAI() {
@@ -79,21 +208,27 @@ export default function GeekAI() {
   const [accessCode, setAccessCode] = useState(() => { try { return sessionStorage.getItem("geekai_access_code") || ""; } catch { return ""; } });
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState(null);
+  const [runError, setRunError] = useState("");
+  const [lastRun, setLastRun] = useState(null);
   const [logs, setLogs] = useState([]);
   const [results, setResults] = useState([]);
   const [activeTab, setActiveTab] = useState("configure");
-  const [expandedId, setExpandedId] = useState(null);
+  const [expandedKey, setExpandedKey] = useState(null);
   const [draftOpp, setDraftOpp] = useState(null);
   const [draft, setDraft] = useState("");
   const [draftLoading, setDraftLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [filterScore, setFilterScore] = useState(0);
   const [sortBy, setSortBy] = useState("relevance");
   const [sortDir, setSortDir] = useState("desc");
   const logEndRef = useRef(null);
 
-  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [logs]);
+  useEffect(() => { logEndRef.current?.scrollIntoView({ block:"nearest" }); }, [logs]);
 
-  const delay = ms => new Promise(r => setTimeout(r, ms));
+  const addLog = (msg, type = "info") => setLogs(prev => [...prev, { msg, type, ts:new Date().toLocaleTimeString("en-SG", { hour12:false }) }]);
+  const togglePortal = id => setSelectedPortals(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+  const toggleAll = () => setSelectedPortals(selectedPortals.length === PORTALS.length ? [] : PORTALS.map(p => p.id));
+  const handleSort = col => { if (sortBy === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(col); setSortDir(col === "title" || col === "portal" || col === "deadline" ? "asc" : "desc"); } };
 
   // All Claude calls go through our own server function (api/messages.js),
   // which holds the API key and checks the access code.
@@ -109,49 +244,23 @@ export default function GeekAI() {
     if (data.error) throw new Error(data.error.message);
     return data;
   };
-  const addLog = (msg, type = "info") => setLogs(prev => [...prev, { msg, type, ts: new Date().toLocaleTimeString() }]);
-  const togglePortal = id => setSelectedPortals(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
-  const toggleAll = () => setSelectedPortals(selectedPortals.length === PORTALS.length ? [] : PORTALS.map(p => p.id));
-  const handleSort = col => { if (sortBy === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(col); setSortDir("desc"); } };
 
   const runAgent = async () => {
-    setRunning(true); setResults([]); setLogs([]);
-    setActiveTab("run"); setPhase("connecting");
+    setRunning(true); setResults([]); setLogs([]); setRunError(""); setExpandedKey(null);
+    setActiveTab("run"); setPhase("preparing");
     const selPortals = PORTALS.filter(p => selectedPortals.includes(p.id));
-
-    addLog("🇸🇬 GEEK AI — Initialising sourcing agent...", "start");
-    await delay(500);
-    addLog(`📋 Business profile: "${businessDesc.slice(0,80)}..."`, "info");
-    await delay(300);
-    addLog(`🔑 Keywords: ${keywords || "(auto-detecting from profile)"}`, "info");
-    await delay(300);
-    addLog(`🗂 Category: ${category || "All categories"}`, "info");
-    await delay(300);
-    addLog(`💰 Budget: ${budget || "No limit specified"}`, "info");
-    await delay(400);
-    addLog(`🌐 Connecting to ${selPortals.length} procurement portals...`, "info");
-    await delay(400);
-    setPhase("scanning");
-    for (const p of selPortals) { addLog(`🔍 Scanning ${p.name} — ${p.desc}`, "scan"); await delay(Math.random() * 300 + 200); }
-    addLog(`📥 Portal scan complete — generating matched opportunities...`, "info");
-    await delay(500);
-    addLog("🧠 AI generating & scoring opportunities based on your inputs...", "ai");
-    setPhase("analyzing");
-
-    const portalList = selPortals.map(p => `${p.name} (${p.type}: ${p.desc})`).join(", ");
-
-    const PORTAL_URLS = {
-      gebiz:"https://www.gebiz.gov.sg", govtech:"https://www.tech.gov.sg/media/procurement",
-      sentinel:"https://www.mindef.gov.sg", hdb:"https://www.hdb.gov.sg/cs/infoweb/about-us/business-with-hdb/procurement-from-hdb",
-      jtc:"https://www.jtc.gov.sg", sla:"https://www.sla.gov.sg", caas:"https://www.changiairport.com/en/business/procurement.html",
-      ariba_sg:"https://supplier.ariba.com", tenderboard:"https://tenderboard.gov.sg",
-      sesami:"https://www.sesami.co", sgh:"https://www.singhealth.com.sg/about-us/careers-and-contracts/procurement",
-      ntu:"https://www.ntu.edu.sg/procurement"
-    };
 
     const searchTerms = keywords
       ? keywords
       : businessDesc.match(/\b(VR|AI|workstation|peripheral|gadget|tech|IT|hardware|software|headset|laptop|monitor|IoT|device)\b/gi)?.slice(0,4).join(" ") || "IT hardware";
+
+    addLog("Search started", "strong");
+    addLog(`Keywords: ${keywords || `${searchTerms} (derived from the business profile)`}`);
+    addLog(`Category: ${category || "All categories"}`);
+    addLog(`Budget: ${budget || "No range specified"}`);
+    addLog(`Portals in scope (${selPortals.length}): ${selPortals.map(p => p.name).join(", ")}`);
+
+    const portalList = selPortals.map(p => `${p.name} (${p.type}: ${p.desc})`).join(", ");
 
     const systemPrompt = `You are a Singapore procurement sourcing agent. Your job is to find REAL, currently open procurement tenders in Singapore that match the given business profile.
 
@@ -176,7 +285,7 @@ After searching, return ONLY a raw JSON array of real tenders you found. Each ob
   "isReal": true
 }
 
-IMPORTANT: Only include tenders you actually found via search. Do not fabricate. If you find fewer than 5 real tenders, fill remaining slots with clearly marked simulated ones with "isReal": false.
+IMPORTANT: Only include tenders you actually found via search. Do not fabricate or simulate any tender. If you find none, return an empty array [].
 Return only the JSON array.`;
 
     const userMsg = `Business Profile: ${businessDesc}
@@ -185,10 +294,10 @@ Category: ${category || "all"}
 Budget preference: ${budget || "any"}
 Active Portals to search: ${portalList}
 
-Search for real open tenders in Singapore (2026) matching this business. Try these searches:
-1. "site:gebiz.gov.sg ${searchTerms} tender 2026"
+Search for real open tenders in Singapore (${new Date().getFullYear()}) matching this business. Try these searches:
+1. "site:gebiz.gov.sg ${searchTerms} tender ${new Date().getFullYear()}"
 2. "site:tenderboard.gov.sg ${searchTerms}"
-3. "Singapore government tender ${searchTerms} 2026"
+3. "Singapore government tender ${searchTerms} ${new Date().getFullYear()}"
 4. "GeBIZ tender ${searchTerms} open"
 5. "Sesami Singapore ${searchTerms} procurement"
 
@@ -196,7 +305,8 @@ Then return all real tenders found as a JSON array.`;
 
     let generated = [];
     try {
-      addLog("📡 Calling AI with web search...", "ai");
+      setPhase("searching");
+      addLog("Searching public tender listings and scoring matches. This can take a few minutes.");
       const data = await callClaude({
         max_tokens:16000,
         system:systemPrompt,
@@ -205,553 +315,402 @@ Then return all real tenders found as a JSON array.`;
       });
 
       // Extract only text blocks (ignore tool_use/tool_result blocks)
-      const raw = (data.content || [])
-        .filter(c => c.type === "text")
-        .map(c => c.text || "")
-        .join("") || "";
-
-      addLog(`📦 Response received (${raw.length} chars, ${(data.content||[]).filter(c=>c.type==="server_tool_use"&&c.name==="web_search").length} searches performed)`, "info");
+      const raw = (data.content || []).filter(c => c.type === "text").map(c => c.text || "").join("");
+      const searches = (data.content || []).filter(c => c.type === "server_tool_use" && c.name === "web_search").length;
+      addLog(`Response received: ${searches} web ${searches === 1 ? "search" : "searches"} run`);
 
       const cleaned = raw.replace(/```json|```/g,"").trim();
       const start = cleaned.indexOf("[");
-      let jsonStr = cleaned.slice(start);
+      const jsonStr = start >= 0 ? cleaned.slice(start) : "";
 
       try {
         generated = JSON.parse(jsonStr);
       } catch {
-        addLog("⚠️ Response truncated, extracting complete records...", "warn");
-        const matches = [...jsonStr.matchAll(/\{[^{}]*"id"\s*:\s*\d+[^{}]*\}/gs)];
+        addLog("Response was incomplete; recovering the complete records", "warn");
         const salvaged = [];
-        for (const m of matches) {
+        for (const m of jsonStr.matchAll(/\{[^{}]*"id"\s*:\s*\d+[^{}]*\}/gs)) {
           try { salvaged.push(JSON.parse(m[0])); } catch {}
         }
-        if (salvaged.length > 0) {
-          generated = salvaged;
-          addLog(`🔧 Salvaged ${salvaged.length} complete records`, "info");
-        } else {
-          throw new Error("Could not parse any records from response");
-        }
+        if (salvaged.length === 0) throw new Error("The response could not be read as a list of tenders");
+        generated = salvaged;
       }
-
-      const realCount = generated.filter(o => o.isReal !== false).length;
-      addLog(`✅ Found ${generated.length} opportunities (${realCount} verified real, ${generated.length - realCount} simulated)`, "success");
-
+      if (!Array.isArray(generated)) generated = [];
     } catch(e) {
-      addLog(`❌ AI call failed: ${e.message}`, "warn");
-      addLog(`💡 Tip: Try narrowing your keywords or selecting fewer portals`, "info");
+      setRunError(e.message);
+      addLog(`Search failed: ${e.message}`, "warn");
     }
 
-    // Strip any simulated results
-    generated = generated.filter(o => o.isReal !== false);
-
-    await delay(300);
-    const scored = generated.sort((a,b) => b.relevance - a.relevance);
-    const high = scored.filter(o => o.relevance >= 85).length;
+    const scored = generated
+      .filter(o => o && o.isReal !== false && o.title)
+      .map((o, i) => ({ ...o, _key:i, relevance:Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))), tags:Array.isArray(o.tags) ? o.tags : [] }))
+      .sort((a,b) => b.relevance - a.relevance);
 
     if (scored.length === 0) {
-      addLog(`⚠️ No verified real tenders found for these inputs`, "warn");
-      addLog(`💡 Try broader keywords, different portals, or check portal login access`, "info");
+      addLog("No matching public listings were found", "warn");
     } else {
-      addLog(`📊 ${scored.length} real opportunities found — ${high} high-relevance`, "success");
-      if (scored[0]) addLog(`⭐ Top match: "${scored[0].title}" (${scored[0].relevance}%)`, "success");
-      addLog("✦ Switching to Results...", "success");
+      const high = scored.filter(o => o.relevance >= HIGH_MATCH).length;
+      addLog(`${scored.length} ${scored.length === 1 ? "opportunity" : "opportunities"} found, ${high} high match`, "ok");
+      addLog(`Top match: ${scored[0].title} (${scored[0].relevance}%)`, "ok");
     }
 
-    setResults(scored); setPhase("done"); setRunning(false);
-    await delay(600); setActiveTab("results");
+    setResults(scored); setPhase("done"); setRunning(false); setLastRun(new Date());
+    if (scored.length > 0) setActiveTab("results");
   };
 
   const generateDraft = async (opp) => {
-    setDraftOpp(opp); setDraft(""); setDraftLoading(true); setActiveTab("draft");
+    setDraftOpp(opp); setDraft(""); setDraftLoading(true); setCopied(false); setActiveTab("draft");
     try {
       const data = await callClaude({
-          max_tokens:4000,
-          system:"You are a professional bid writer for a Singapore-based ecommerce company. Write formal expressions of interest following Singapore government/corporate procurement norms.",
-          messages:[{role:"user", content:`Write a concise Expression of Interest for this Singapore procurement opportunity.\n\nOur Business: ${businessDesc}\nOpportunity: ${opp.title}\nAgency: ${opp.agency}\nBudget: ${opp.budget ? `SGD ${Number(opp.budget).toLocaleString()}` : "not stated"}\nRef: ${opp.refNo}\nDescription: ${opp.description}\n\n3 paragraphs: 1) Company intro & fit, 2) Capabilities & SG track record, 3) Professional closing. Under 260 words. Formal Singapore business tone.`}]
+        max_tokens:4000,
+        system:"You are a professional bid writer for a Singapore-based ecommerce company. Write formal expressions of interest following Singapore government/corporate procurement norms.",
+        messages:[{role:"user", content:`Write a concise Expression of Interest for this Singapore procurement opportunity.\n\nOur Business: ${businessDesc}\nOpportunity: ${opp.title}\nAgency: ${opp.agency}\nBudget: ${Number(opp.budget) > 0 ? `SGD ${Number(opp.budget).toLocaleString()}` : "not stated"}\nRef: ${opp.refNo}\nDescription: ${opp.description}\n\n3 paragraphs: 1) Company intro & fit, 2) Capabilities & SG track record, 3) Professional closing. Under 260 words. Formal Singapore business tone.`}]
       });
-      setDraft((data.content||[]).filter(c=>c.type==="text").map(c=>c.text||"").join("") || "Draft unavailable.");
-    } catch(e) { setDraft(`Unable to generate draft: ${e.message}`); }
+      setDraft((data.content||[]).filter(c=>c.type==="text").map(c=>c.text||"").join("").trim() || "No draft was returned. Please try again.");
+    } catch(e) { setDraft(`The draft could not be generated: ${e.message}`); }
     setDraftLoading(false);
   };
 
+  const copyDraft = async () => {
+    try { await navigator.clipboard.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+  };
+
   const portalTypes = [...new Set(PORTALS.map(p => p.type))];
-  const filtered = results.filter(r => r.relevance >= filterScore);
-  const sorted = [...filtered].sort((a,b) => {
-    let av=a[sortBy], bv=b[sortBy];
-    if (sortBy==="deadline"){av=new Date(av);bv=new Date(bv);}
-    if (sortBy==="budget"){av=+av;bv=+bv;}
-    return sortDir==="asc"?(av>bv?1:-1):(av<bv?1:-1);
-  });
-  const SortIcon = ({col}) => <span style={{marginLeft:3,opacity:sortBy===col?1:0.25,fontSize:9}}>{sortBy===col?(sortDir==="asc"?"▲":"▼"):"⇅"}</span>;
+  const sorted = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const val = r => sortBy === "deadline" ? (Date.parse(r.deadline) || Infinity)
+      : sortBy === "budget" ? (Number(r.budget) || 0)
+      : sortBy === "relevance" ? r.relevance
+      : String(r[sortBy] ?? "").toLowerCase();
+    return results.filter(r => r.relevance >= filterScore).sort((a,b) => { const av = val(a), bv = val(b); return av === bv ? 0 : (av > bv ? dir : -dir); });
+  }, [results, filterScore, sortBy, sortDir]);
+
+  const highCount = results.filter(r => r.relevance >= HIGH_MATCH).length;
+  const closingSoon = results.filter(r => { const d = daysLeft(r.deadline); return d !== null && d >= 0 && d <= CLOSING_SOON_DAYS; }).length;
+  const totalBudget = results.reduce((s,r) => s + (Number(r.budget) || 0), 0);
+  const stepIndex = STEPS.findIndex(s => s.id === phase);
+  const canRun = !running && selectedPortals.length > 0 && businessDesc.trim() && accessCode.trim();
+
+  const Th = ({ col, children, className }) => (
+    <th className={className} aria-sort={sortBy === col ? (sortDir === "asc" ? "ascending" : "descending") : undefined}>
+      <button type="button" onClick={() => handleSort(col)}>{children}{sortBy === col ? (sortDir === "asc" ? " ↑" : " ↓") : ""}</button>
+    </th>
+  );
+
+  const Deadline = ({ value }) => {
+    const d = daysLeft(value);
+    if (d === null) return <span className="pa-sub">Not stated</span>;
+    return (
+      <>
+        <div className="num">{value}</div>
+        <div className={`pa-sub ${d >= 0 && d <= CLOSING_SOON_DAYS ? "pa-urgent" : ""}`}>{d < 0 ? "Closed" : d === 0 ? "Closes today" : `${d} ${d === 1 ? "day" : "days"} left`}</div>
+      </>
+    );
+  };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",height:"100vh",background:"#060e1a",color:"#b8cfe0",fontFamily:"Inter,system-ui,sans-serif",fontSize:13,overflow:"hidden"}}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@700;800;900&family=DM+Mono:wght@400;500&display=swap');
-        *{box-sizing:border-box;margin:0;padding:0}
-        ::-webkit-scrollbar{width:4px;height:4px}
-        ::-webkit-scrollbar-track{background:#060e1a}
-        ::-webkit-scrollbar-thumb{background:#142033;border-radius:3px}
-        ::-webkit-scrollbar-thumb:hover{background:#1e3349}
-        @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.6)}}
-        @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes slideIn{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:translateX(0)}}
-        .nav-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:7px;cursor:pointer;transition:all 0.15s;color:#3d5a78;font-size:12.5px;font-weight:500;border:none;background:none;width:100%;text-align:left;letter-spacing:0.01em}
-        .nav-item:hover{background:#0c1828;color:#7a9bbf}
-        .nav-item.active{background:#0e2035;color:#2dd4bf;border-left:2px solid #2dd4bf;padding-left:12px}
-        .data-row{display:grid;grid-template-columns:44px 1fr 150px 120px 108px 100px 120px;align-items:center;padding:0 16px;height:54px;border-bottom:1px solid #0b1827;cursor:pointer;transition:background 0.1s}
-        .data-row:hover{background:#09162a}
-        .data-row.expanded{background:#07111f;border-left:2px solid #2dd4bf}
-        .th{font-size:10.5px;font-weight:700;color:#2a3f56;text-transform:uppercase;letter-spacing:0.09em;cursor:pointer;user-select:none;display:flex;align-items:center}
-        .th:hover{color:#3d6080}
-        .fi{background:#060e1a;border:1px solid #142033;color:#b8cfe0;padding:8px 12px;border-radius:7px;font-family:inherit;font-size:13px;width:100%;outline:none;transition:all 0.2s}
-        .fi:focus{border-color:#2dd4bf;box-shadow:0 0 0 3px rgba(45,212,191,0.06)}
-        .fi::placeholder{color:#1e3349}
-        .btn-p{background:linear-gradient(135deg,#0891b2,#2dd4bf);border:none;color:#031018;padding:9px 22px;border-radius:7px;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:all 0.2s;display:inline-flex;align-items:center;gap:7px}
-        .btn-p:hover:not(:disabled){opacity:0.88;transform:translateY(-1px);box-shadow:0 6px 20px rgba(45,212,191,0.2)}
-        .btn-p:disabled{opacity:0.3;cursor:not-allowed;transform:none}
-        .btn-s{background:#08121f;border:1px solid #142033;color:#7a9bbf;padding:7px 16px;border-radius:7px;font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
-        .btn-s:hover{border-color:#2dd4bf;color:#2dd4bf;background:#0e2035}
-        .btn-g{background:none;border:none;color:#3d5a78;padding:6px 10px;border-radius:6px;font-family:inherit;font-size:12px;cursor:pointer;transition:all 0.15s}
-        .btn-g:hover{color:#7a9bbf;background:#0c1828}
-        .pchip{cursor:pointer;padding:6px 12px;border-radius:6px;font-size:12px;border:1px solid #142033;background:#08121f;transition:all 0.15s;display:inline-flex;align-items:center;gap:6px;color:#3d5a78;white-space:nowrap}
-        .pchip:hover{border-color:#1e3349;color:#7a9bbf}
-        .pchip.on{border-color:#2dd4bf40;background:#0e203580;color:#2dd4bf}
-        .panel{background:#08121f;border:1px solid #0f1e30;border-radius:10px;overflow:hidden}
-        .ll{padding:2px 0;font-family:'DM Mono',monospace;font-size:11.5px;line-height:1.9;animation:slideIn 0.18s ease}
-        .stl{font-size:10.5px;font-weight:700;color:#2a3f56;text-transform:uppercase;letter-spacing:0.13em}
-        .chip{display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:10.5px;background:#0b1827;color:#3d5a78;border:1px solid #142033;letter-spacing:0.02em}
-        .divider{height:1px;background:linear-gradient(to right,transparent,#142033,transparent);margin:4px 0}
-      `}</style>
+    <div className="pa">
+      <style>{CSS}</style>
 
-      {/* ── TOP BAR ─────────────────────────────────────────── */}
-      <div style={{height:50,borderBottom:"1px solid #0b1827",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",background:"#050c18",flexShrink:0,gap:16}}>
-        <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <div style={{display:"flex",alignItems:"center",gap:1}}>
-            <span style={{fontFamily:"'Syne',sans-serif",fontSize:17,fontWeight:900,letterSpacing:"0.08em",color:"#daeef8"}}>GEEK</span>
-            <span style={{fontFamily:"'Syne',sans-serif",fontSize:17,fontWeight:900,letterSpacing:"0.08em",color:"#2dd4bf"}}>-AI</span>
-          </div>
-          <div style={{width:1,height:18,background:"#0f1e30"}}/>
-          <span style={{fontSize:11,color:"#1e3349",letterSpacing:"0.14em",textTransform:"uppercase",fontWeight:600}}>Procurement Intelligence</span>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <Badge color={C.teal}>🇸🇬 Singapore</Badge>
-          {results.length>0 && <>
-            <Badge color={C.green}>{results.filter(r=>r.relevance>=85).length} High Match</Badge>
-            <Badge color={C.amber}>SGD {(results.reduce((s,r)=>s+r.budget,0)/1000).toFixed(0)}K Pipeline</Badge>
-          </>}
-          <div style={{display:"flex",alignItems:"center",gap:7,padding:"5px 12px",background:"#08121f",borderRadius:6,border:"1px solid #0f1e30"}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background:running?C.teal:phase==="done"?C.green:"#1a2e44",animation:running?"pulse 1.5s infinite":"none"}}/>
-            <span style={{fontSize:11,color:running?C.teal:phase==="done"?C.green:"#1a2e44",fontWeight:600,letterSpacing:"0.04em"}}>
-              {running?"Running":phase==="done"?"Complete":"Idle"}
-            </span>
+      <header className="pa-top">
+        <div className="pa-top-in">
+          <div className="pa-brand">GEEK-AI<span>Procurement Intelligence</span></div>
+          <nav className="pa-nav" aria-label="Sections">
+            {TABS.map(t => (
+              <button key={t.id} type="button" className="pa-tab" aria-current={activeTab === t.id ? "page" : undefined} onClick={() => setActiveTab(t.id)}>
+                {t.label}
+                {t.id === "results" && results.length > 0 && <span className="pa-count num">{results.length}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="pa-status" role="status">
+            <span className={`pa-dot ${running ? "run" : phase === "done" ? "ok" : ""}`} />
+            {running ? "Searching" : phase === "done" ? "Search complete" : "Ready"}
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* ── BODY ────────────────────────────────────────────── */}
-      <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+      <main className="pa-main">
 
-        {/* SIDEBAR */}
-        <div style={{width:196,borderRight:"1px solid #0b1827",background:"#050c18",display:"flex",flexDirection:"column",padding:"14px 10px",flexShrink:0}}>
-          <div style={{fontSize:9.5,color:"#1a2e44",textTransform:"uppercase",letterSpacing:"0.16em",marginBottom:8,padding:"0 4px",fontWeight:700}}>Menu</div>
-          {NAV.map(n=>(
-            <button key={n.id} className={`nav-item ${activeTab===n.id?"active":""}`} onClick={()=>setActiveTab(n.id)}>
-              <span style={{fontSize:13,width:18,textAlign:"center",opacity:activeTab===n.id?1:0.6}}>{n.icon}</span>
-              <span>{n.label}</span>
-              {n.id==="results"&&results.length>0&&(
-                <span style={{marginLeft:"auto",background:"#0e2035",color:"#2dd4bf",fontSize:10,padding:"1px 7px",borderRadius:10,fontWeight:700}}>{results.length}</span>
-              )}
-            </button>
-          ))}
-
-          <div style={{flex:1}}/>
-          <div className="divider"/>
-          <div style={{padding:"14px 4px 0"}}>
-            <div style={{fontSize:9.5,color:"#1a2e44",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.13em",fontWeight:700}}>Portals Active</div>
-            <div style={{fontSize:24,fontWeight:800,color:"#2dd4bf",fontFamily:"'Syne',sans-serif",lineHeight:1}}>
-              {selectedPortals.length}
-              <span style={{fontSize:12,color:"#1a2e44",fontWeight:400}}>/{PORTALS.length}</span>
-            </div>
-            <div style={{marginTop:8,height:2,background:"#0b1827",borderRadius:1,overflow:"hidden"}}>
-              <div style={{width:`${(selectedPortals.length/PORTALS.length)*100}%`,height:"100%",background:"linear-gradient(90deg,#0891b2,#2dd4bf)",transition:"width 0.3s"}}/>
-            </div>
-          </div>
-          <div style={{padding:"20px 4px 0",fontSize:10,color:"#142033",letterSpacing:"0.06em"}}>
-            Powered by Claude AI
-          </div>
-        </div>
-
-        {/* MAIN CONTENT */}
-        <div style={{flex:1,overflow:"auto",padding:"24px 28px",display:"flex",flexDirection:"column",gap:20,animation:"fadeIn 0.2s ease"}}>
-
-          {/* ── CONFIGURE ───────────────────────────────────── */}
-          {activeTab==="configure"&&(
-            <div style={{maxWidth:840,display:"flex",flexDirection:"column",gap:20}}>
-              <div style={{borderBottom:"1px solid #0b1827",paddingBottom:16}}>
-                <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:21,fontWeight:900,color:"#daeef8",marginBottom:4,letterSpacing:"-0.01em"}}>Configure Agent</h2>
-                <p style={{fontSize:12,color:"#2a3f56"}}>Set your search parameters and select procurement portals to source from.</p>
-              </div>
-
-              {/* Business Profile */}
-              <div className="panel">
-                <div style={{padding:"12px 16px",borderBottom:"1px solid #0b1827",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <span className="stl">Business Profile</span>
-                  <Badge color="#7a9bbf">✎ Editable</Badge>
-                </div>
-                <div style={{padding:"16px 20px",display:"flex",gap:14,alignItems:"flex-start"}}>
-                  <div style={{width:38,height:38,borderRadius:9,background:"linear-gradient(135deg,#0891b2,#2dd4bf)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0,marginTop:2}}>🏢</div>
-                  <textarea
-                    className="fi"
-                    rows={3}
-                    style={{resize:"vertical",lineHeight:1.75,fontFamily:"Inter,system-ui,sans-serif"}}
-                    value={businessDesc}
-                    onChange={e=>setBusinessDesc(e.target.value)}
-                    placeholder="Describe your ecommerce business, products, and target markets..."
-                  />
-                </div>
-              </div>
-
-              {/* Search Parameters */}
-              <div className="panel">
-                <div style={{padding:"12px 16px",borderBottom:"1px solid #0b1827"}}>
-                  <span className="stl">Search Parameters</span>
-                </div>
-                <div style={{padding:"20px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:18}}>
-                  <div>
-                    <div style={{fontSize:10.5,fontWeight:700,color:"#2a3f56",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:7}}>Keywords</div>
-                    <input className="fi" placeholder="VR headsets, AI workstations..." value={keywords} onChange={e=>setKeywords(e.target.value)}/>
-                  </div>
-                  <div>
-                    <div style={{fontSize:10.5,fontWeight:700,color:"#2a3f56",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:7}}>Category</div>
-                    <select className="fi" value={category} onChange={e=>setCategory(e.target.value)}>
-                      <option value="">All Categories</option>
-                      <option>IT Hardware & Software</option>
-                      <option>Office Supplies</option>
-                      <option>Corporate Gifting</option>
-                      <option>Medical & Healthcare</option>
-                      <option>Apparel & PPE</option>
-                      <option>Retail & FMCG</option>
-                      <option>Logistics & Fulfilment</option>
-                    </select>
-                  </div>
-                  <div>
-                    <div style={{fontSize:10.5,fontWeight:700,color:"#2a3f56",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:7}}>Budget Range (SGD)</div>
-                    <input className="fi" placeholder="e.g. 50,000 – 500,000" value={budget} onChange={e=>setBudget(e.target.value)}/>
-                  </div>
-                </div>
-              </div>
-
-              {/* Portals */}
-              <div className="panel">
-                <div style={{padding:"12px 16px",borderBottom:"1px solid #0b1827",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <span className="stl">Procurement Portals</span>
-                  <button className="btn-g" onClick={toggleAll} style={{fontSize:11}}>
-                    {selectedPortals.length===PORTALS.length?"Deselect All":"Select All"}
-                  </button>
-                </div>
-                <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:18}}>
-                  {portalTypes.map(type=>(
-                    <div key={type}>
-                      <div style={{fontSize:9.5,color:"#1a2e44",textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:10,display:"flex",alignItems:"center",gap:10,fontWeight:700}}>
-                        <div style={{flex:1,height:1,background:"#0b1827"}}/>
-                        <span>{type}</span>
-                        <div style={{flex:1,height:1,background:"#0b1827"}}/>
-                      </div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
-                        {PORTALS.filter(p=>p.type===type).map(p=>(
-                          <div key={p.id} className={`pchip ${selectedPortals.includes(p.id)?"on":""}`} onClick={()=>togglePortal(p.id)}>
-                            <span>{p.flag}</span>
-                            <span style={{fontWeight:600}}>{p.name}</span>
-                            <span style={{color:"#1a2e44",fontSize:10.5}}>— {p.desc}</span>
-                            {selectedPortals.includes(p.id)&&<span style={{color:"#2dd4bf",fontSize:10,marginLeft:2}}>✓</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Access code */}
-              <div className="panel">
-                <div style={{padding:"12px 16px",borderBottom:"1px solid #0b1827"}}>
-                  <span className="stl">Access Code</span>
-                </div>
-                <div style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14}}>
-                  <input className="fi" type="password" autoComplete="off" style={{maxWidth:260}} placeholder="Enter access code" value={accessCode} onChange={e=>setAccessCode(e.target.value)}/>
-                  <span style={{fontSize:11.5,color:"#2a3f56"}}>Required to run the agent and generate drafts.</span>
-                </div>
-              </div>
-
-              <div style={{display:"flex",alignItems:"center",gap:14,paddingTop:4}}>
-                <button className="btn-p" onClick={runAgent} disabled={running||selectedPortals.length===0||!businessDesc.trim()||!accessCode.trim()}>
-                  {running?"⟳  Running...":"⚡  Run Procurement Agent"}
-                </button>
-                <span style={{fontSize:11.5,color:"#1e3349"}}>{selectedPortals.length} portals · AI relevance scoring · Bid draft generation</span>
+        {activeTab === "configure" && (
+          <div className="pa-narrow">
+            <div className="pa-head">
+              <div>
+                <h1>Search setup</h1>
+                <p>Describe the business, set the search scope, and choose the portals to cover.</p>
               </div>
             </div>
-          )}
 
-          {/* ── AGENT LOG ───────────────────────────────────── */}
-          {activeTab==="run"&&(
-            <div style={{maxWidth:840,display:"flex",flexDirection:"column",gap:18}}>
-              <div style={{borderBottom:"1px solid #0b1827",paddingBottom:16}}>
-                <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:21,fontWeight:900,color:"#daeef8",marginBottom:4,letterSpacing:"-0.01em"}}>Agent Log</h2>
-                <p style={{fontSize:12,color:"#2a3f56"}}>Live activity stream from the GEEK AI sourcing agent.</p>
+            <section className="pa-card">
+              <div className="pa-card-h"><h2>Business profile</h2></div>
+              <div className="pa-card-b">
+                <label className="pa-lab" htmlFor="pa-profile">Used to find and score matching tenders, and to write drafts</label>
+                <textarea id="pa-profile" className="pa-in" rows={4} value={businessDesc} onChange={e => setBusinessDesc(e.target.value)} placeholder="Describe your business, products, and target customers" />
               </div>
+            </section>
 
-              {/* Phase pipeline */}
-              <div style={{display:"flex",gap:6}}>
-                {["connecting","scanning","analyzing","done"].map((p,i)=>{
-                  const phases=["connecting","scanning","analyzing","done"];
-                  const idx=phases.indexOf(phase);
-                  const isActive=phase===p, isDone=idx>i;
-                  return (
-                    <div key={p} style={{flex:1,padding:"10px 14px",borderRadius:7,background:isActive?"rgba(45,212,191,0.06)":isDone?"rgba(16,185,129,0.04)":"#08121f",border:`1px solid ${isActive?"#2dd4bf40":isDone?"#10b98130":"#0f1e30"}`,display:"flex",alignItems:"center",gap:8,transition:"all 0.3s"}}>
-                      <div style={{width:6,height:6,borderRadius:"50%",background:isActive?C.teal:isDone?C.green:"#142033",animation:isActive?"pulse 1.5s infinite":"none",flexShrink:0}}/>
-                      <span style={{fontSize:11,fontWeight:600,textTransform:"capitalize",color:isActive?C.teal:isDone?C.green:"#1a2e44",letterSpacing:"0.04em"}}>{p}</span>
-                      {isDone&&<span style={{marginLeft:"auto",fontSize:10,color:C.green}}>✓</span>}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Log terminal */}
-              <div className="panel">
-                <div style={{padding:"10px 16px",borderBottom:"1px solid #0b1827",display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{display:"flex",gap:5}}>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:"#ef4444",opacity:0.6}}/>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:"#f59e0b",opacity:0.6}}/>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:"#10b981",opacity:0.6}}/>
-                  </div>
-                  <span style={{fontSize:10.5,color:"#1a2e44",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginLeft:4}}>Terminal</span>
-                  {running&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
-                    <div style={{width:5,height:5,borderRadius:"50%",background:C.teal,animation:"pulse 1.2s infinite"}}/>
-                    <span style={{fontSize:10,color:C.teal,letterSpacing:"0.08em"}}>LIVE</span>
-                  </div>}
-                </div>
-                <div style={{padding:"16px 20px",minHeight:340,maxHeight:440,overflowY:"auto",background:"#04080f"}}>
-                  {logs.length===0&&<span style={{color:"#0f1e30",fontFamily:"'DM Mono',monospace",fontSize:12}}>// Awaiting agent run...</span>}
-                  {logs.map((log,i)=>(
-                    <div key={i} className="ll" style={{color:log.type==="success"?C.green:log.type==="ai"?C.purple:log.type==="warn"?C.amber:log.type==="scan"?C.teal:log.type==="start"?"#daeef8":"#2a4a64"}}>
-                      <span style={{color:"#0f1e30",marginRight:12,userSelect:"none"}}>[{log.ts}]</span>{log.msg}
-                    </div>
-                  ))}
-                  <div ref={logEndRef}/>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ── RESULTS ─────────────────────────────────────── */}
-          {activeTab==="results"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:18,animation:"fadeIn 0.2s ease"}}>
-              <div style={{borderBottom:"1px solid #0b1827",paddingBottom:16,display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+            <section className="pa-card">
+              <div className="pa-card-h"><h2>Search parameters</h2><span className="pa-hint">All optional</span></div>
+              <div className="pa-card-b pa-grid3">
                 <div>
-                  <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:21,fontWeight:900,color:"#daeef8",marginBottom:4,letterSpacing:"-0.01em"}}>Opportunities</h2>
-                  <p style={{fontSize:12,color:"#2a3f56"}}>AI-scored procurement opportunities across Singapore portals.</p>
+                  <label className="pa-lab" htmlFor="pa-keywords">Keywords</label>
+                  <input id="pa-keywords" className="pa-in" placeholder="VR headsets, AI workstations" value={keywords} onChange={e => setKeywords(e.target.value)} />
                 </div>
-                {results.length>0&&<button className="btn-s" onClick={runAgent} disabled={running}>↻ Re-run Agent</button>}
-              </div>
-
-              {results.length===0?(
-                <div className="panel" style={{padding:"64px 40px",textAlign:"center"}}>
-                  <div style={{fontSize:32,marginBottom:14,opacity:0.3}}>◈</div>
-                  <div style={{color:"#2a3f56",fontSize:14,fontWeight:600,marginBottom:6}}>
-                    {phase==="done" ? "No verified tenders found" : "No results yet"}
-                  </div>
-                  <div style={{color:"#1a2e44",fontSize:12,marginBottom:22,lineHeight:1.8}}>
-                    {phase==="done"
-                      ? "The agent couldn't find publicly accessible tenders matching your inputs.\nMost portals (GeBIZ, Tenderboard, Sesami) require login to access live listings.\nTry the portal login feature to unlock authenticated scraping."
-                      : "Configure your parameters and run the agent to source opportunities."}
-                  </div>
-                  <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-                    <button className="btn-p" onClick={()=>setActiveTab("configure")}>⚙ Adjust Parameters</button>
-                  </div>
-                </div>
-              ):(
-                <>
-                  {/* Stats row */}
-                  <div style={{display:"flex",gap:12}}>
-                    <StatCard label="Total Found" value={results.length} sub={`${selectedPortals.length} portals scanned`}/>
-                    <StatCard label="High Match" value={results.filter(r=>r.relevance>=85).length} sub="≥85% relevance" color={C.green}/>
-                    <StatCard label="Total Pipeline" value={`S$${(results.reduce((s,r)=>s+r.budget,0)/1000).toFixed(0)}K`} sub="combined budget" color={C.amber}/>
-                    <StatCard label="Top Score" value={`${Math.max(...results.map(r=>r.relevance))}%`} sub={[...results].sort((a,b)=>b.relevance-a.relevance)[0]?.portal} color={C.purple}/>
-                  </div>
-
-                  {/* Filter bar */}
-                  <div className="panel" style={{padding:"11px 18px",display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span style={{fontSize:11,color:"#2a3f56",fontWeight:600,whiteSpace:"nowrap"}}>Min. Match</span>
-                      <input type="range" min={0} max={90} step={5} value={filterScore} onChange={e=>setFilterScore(+e.target.value)} style={{width:100,accentColor:"#2dd4bf",cursor:"pointer"}}/>
-                      <Badge color={C.teal}>{filterScore}%+</Badge>
-                    </div>
-                    <div style={{width:1,height:18,background:"#0b1827"}}/>
-                    <span style={{fontSize:12,color:"#2a3f56"}}><span style={{color:"#7a9bbf",fontWeight:600}}>{sorted.length}</span> of {results.length} shown</span>
-                    <Badge color={C.green}>✓ {results.length} Verified Real</Badge>
-                    <div style={{marginLeft:"auto",fontSize:11,color:"#1a2e44"}}>Click column to sort · Click row to expand</div>
-                  </div>
-
-                  {/* Data table */}
-                  <div className="panel">
-                    <div style={{display:"grid",gridTemplateColumns:"44px 1fr 150px 120px 108px 100px 120px",padding:"0 16px",height:38,borderBottom:"1px solid #0b1827",alignItems:"center",background:"#060e1a"}}>
-                      <div className="th">#</div>
-                      <div className="th" onClick={()=>handleSort("title")}>Opportunity <SortIcon col="title"/></div>
-                      <div className="th" onClick={()=>handleSort("portal")}>Portal <SortIcon col="portal"/></div>
-                      <div className="th" onClick={()=>handleSort("budget")}>Budget <SortIcon col="budget"/></div>
-                      <div className="th" onClick={()=>handleSort("deadline")}>Deadline <SortIcon col="deadline"/></div>
-                      <div className="th" onClick={()=>handleSort("relevance")}>Match <SortIcon col="relevance"/></div>
-                      <div className="th">Actions</div>
-                    </div>
-                    {sorted.map((opp,idx)=>(
-                      <div key={opp.id}>
-                        <div className={`data-row ${expandedId===opp.id?"expanded":""}`} onClick={()=>setExpandedId(expandedId===opp.id?null:opp.id)}>
-                          <div style={{fontSize:11,color:"#1a2e44",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{String(idx+1).padStart(2,"0")}</div>
-                          <div style={{minWidth:0}}>
-                            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:2}}>
-                              <div style={{fontSize:12.5,fontWeight:600,color:"#c5ddf0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",paddingRight:8}}>{opp.title}</div>
-                              {opp.isReal===false
-                                ? <span style={{fontSize:9,fontWeight:700,color:C.amber,background:`${C.amber}15`,border:`1px solid ${C.amber}30`,padding:"1px 5px",borderRadius:3,flexShrink:0,letterSpacing:"0.06em"}}>SIM</span>
-                                : <span style={{fontSize:9,fontWeight:700,color:C.green,background:`${C.green}15`,border:`1px solid ${C.green}30`,padding:"1px 5px",borderRadius:3,flexShrink:0,letterSpacing:"0.06em"}}>REAL</span>
-                              }
-                            </div>
-                            <div style={{fontSize:11,color:"#2a4a64"}}>{opp.agency}</div>
-                          </div>
-                          <div><Badge color={C.teal}>{opp.portal}</Badge></div>
-                          <div style={{fontSize:12.5,fontWeight:700,color:C.green,fontFamily:"'DM Mono',monospace"}}>{opp.budget ? `S$${Number(opp.budget).toLocaleString()}` : "TBC"}</div>
-                          <div style={{fontSize:11.5,color:opp.deadline&&new Date(opp.deadline)<new Date(Date.now()+14*86400000)?C.red:"#7a9bbf",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{opp.deadline||"TBC"}</div>
-                          <div style={{paddingRight:8}}><RelevanceBar score={opp.relevance}/></div>
-                          <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
-                            <button className="btn-s" onClick={()=>generateDraft(opp)} style={{padding:"5px 10px",fontSize:11}}>✦ Draft</button>
-                            <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn-s" style={{padding:"5px 10px",fontSize:13}}>↗</a>
-                          </div>
-                        </div>
-                        {expandedId===opp.id&&(
-                          <div style={{padding:"18px 20px 20px 64px",background:"#060f1c",borderBottom:"1px solid #0b1827",animation:"fadeIn 0.18s ease"}}>
-                            <div style={{display:"grid",gridTemplateColumns:"1fr 200px",gap:24}}>
-                              <div>
-                                <div style={{fontSize:10,fontWeight:700,color:"#1a2e44",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:8}}>Description</div>
-                                <p style={{fontSize:12.5,color:"#6a8aaa",lineHeight:1.8,marginBottom:12}}>{opp.description}</p>
-                                <div style={{fontSize:11,color:C.purple,fontStyle:"italic",marginBottom:14,padding:"8px 12px",background:"rgba(167,139,250,0.05)",borderRadius:6,borderLeft:`2px solid ${C.purple}40`}}>🤖 {opp.aiReason}</div>
-                                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{opp.tags.map(t=><span key={t} className="chip">{t}</span>)}</div>
-                              </div>
-                              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                                <div style={{background:"#08121f",border:"1px solid #0f1e30",borderRadius:8,padding:"11px 14px"}}>
-                                  <div style={{fontSize:9.5,color:"#1a2e44",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:4,fontWeight:700}}>Ref No.</div>
-                                  <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:"#2a4a64"}}>{opp.refNo}</div>
-                                </div>
-                                <div style={{background:"#08121f",border:"1px solid #0f1e30",borderRadius:8,padding:"11px 14px"}}>
-                                  <div style={{fontSize:9.5,color:"#1a2e44",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:4,fontWeight:700}}>Category</div>
-                                  <div style={{fontSize:12,color:"#7a9bbf"}}>{opp.category}</div>
-                                </div>
-                                <button className="btn-p" style={{justifyContent:"center"}} onClick={()=>generateDraft(opp)}>✦ Generate Draft</button>
-                                <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn-s" style={{justifyContent:"center"}}>↗ View on {opp.portal}</a>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* ── BID DRAFT ───────────────────────────────────── */}
-          {activeTab==="draft"&&(
-            <div style={{maxWidth:840,display:"flex",flexDirection:"column",gap:18}}>
-              <div style={{borderBottom:"1px solid #0b1827",paddingBottom:16,display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
                 <div>
-                  <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:21,fontWeight:900,color:"#daeef8",marginBottom:4,letterSpacing:"-0.01em"}}>Bid Draft</h2>
-                  <p style={{fontSize:12,color:"#2a3f56"}}>AI-generated expression of interest for your selected opportunity.</p>
+                  <label className="pa-lab" htmlFor="pa-category">Category</label>
+                  <select id="pa-category" className="pa-in" value={category} onChange={e => setCategory(e.target.value)}>
+                    <option value="">All categories</option>
+                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
                 </div>
-                {draftOpp&&<button className="btn-g" onClick={()=>setActiveTab("results")}>← Back to Results</button>}
+                <div>
+                  <label className="pa-lab" htmlFor="pa-budget">Budget range (SGD)</label>
+                  <input id="pa-budget" className="pa-in" placeholder="50,000 to 500,000" value={budget} onChange={e => setBudget(e.target.value)} />
+                </div>
               </div>
+            </section>
 
-              {!draftOpp?(
-                <div className="panel" style={{padding:"64px 40px",textAlign:"center"}}>
-                  <div style={{fontSize:32,marginBottom:14,opacity:0.3}}>✦</div>
-                  <div style={{color:"#2a3f56",fontSize:14,fontWeight:600,marginBottom:6}}>No draft selected</div>
-                  <div style={{color:"#1a2e44",fontSize:12,marginBottom:22}}>Go to Results and click "Draft" on any opportunity.</div>
-                  <button className="btn-p" onClick={()=>setActiveTab("results")}>◈ View Results</button>
+            <section className="pa-card">
+              <div className="pa-card-h">
+                <h2>Portals <span className="pa-hint num">{selectedPortals.length} of {PORTALS.length} selected</span></h2>
+                <button type="button" className="pa-link" onClick={toggleAll}>{selectedPortals.length === PORTALS.length ? "Clear all" : "Select all"}</button>
+              </div>
+              <div className="pa-card-b">
+                {portalTypes.map(type => (
+                  <div key={type} className="pa-pgroup">
+                    <div className="pa-ptype">{type}</div>
+                    <div className="pa-pgrid">
+                      {PORTALS.filter(p => p.type === type).map(p => (
+                        <label key={p.id} className="pa-pitem">
+                          <input type="checkbox" checked={selectedPortals.includes(p.id)} onChange={() => togglePortal(p.id)} />
+                          <span><b>{p.name}</b><small>{p.desc}</small></span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="pa-card">
+              <div className="pa-card-h"><h2>Access</h2></div>
+              <div className="pa-card-b">
+                <label className="pa-lab" htmlFor="pa-code">Access code</label>
+                <input id="pa-code" className="pa-in" type="password" autoComplete="off" style={{maxWidth:280}} placeholder="Provided by your administrator" value={accessCode} onChange={e => setAccessCode(e.target.value)} />
+              </div>
+            </section>
+
+            <div className="pa-toolbar" style={{marginTop:24}}>
+              <button type="button" className="pa-btn primary" onClick={runAgent} disabled={!canRun}>{running ? "Searching…" : "Run search"}</button>
+              <span className="pa-hint">
+                {!accessCode.trim() ? "Enter the access code to run a search." : selectedPortals.length === 0 ? "Select at least one portal." : "Searches public listings, then scores each tender against the profile."}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "run" && (
+          <div className="pa-narrow">
+            <div className="pa-head">
+              <div>
+                <h1>Activity</h1>
+                <p>Progress of the current search.</p>
+              </div>
+            </div>
+
+            <div className="pa-steps">
+              {STEPS.map((s, i) => (
+                <div key={s.id} className={`pa-step ${stepIndex === i && phase !== "done" ? "on" : stepIndex > i || phase === "done" ? "past" : ""}`}>
+                  <i>{stepIndex > i || phase === "done" ? "✓" : i + 1}</i>{s.label}
                 </div>
-              ):(
-                <>
-                  {/* Opportunity info */}
-                  <div className="panel">
-                    <div style={{padding:"12px 16px",borderBottom:"1px solid #0b1827",display:"flex",alignItems:"center",gap:8}}>
-                      <span className="stl">Selected Opportunity</span>
-                      <Badge color={C.teal}>{draftOpp.portal}</Badge>
-                    </div>
-                    <div style={{padding:"16px 20px",display:"grid",gridTemplateColumns:"1fr auto",gap:20,alignItems:"center"}}>
-                      <div>
-                        <div style={{fontSize:14,fontWeight:700,color:"#c5ddf0",marginBottom:6}}>{draftOpp.title}</div>
-                        <div style={{fontSize:12,color:"#2a4a64"}}>
-                          {draftOpp.agency}
-                          <span style={{margin:"0 8px",color:"#0f1e30"}}>·</span>
-                          <span style={{fontFamily:"'DM Mono',monospace",color:"#1a2e44"}}>{draftOpp.refNo}</span>
-                          <span style={{margin:"0 8px",color:"#0f1e30"}}>·</span>
-                          <span style={{color:C.green,fontWeight:600}}>{draftOpp.budget ? `S$${Number(draftOpp.budget).toLocaleString()}` : "Budget TBC"}</span>
-                        </div>
-                      </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:10,color:"#1a2e44",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:4,fontWeight:700}}>Deadline</div>
-                        <div style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:C.red,fontWeight:700}}>{draftOpp.deadline}</div>
-                      </div>
-                    </div>
-                  </div>
+              ))}
+            </div>
 
-                  {/* Draft content */}
-                  <div className="panel">
-                    <div style={{padding:"10px 16px",borderBottom:"1px solid #0b1827",display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{display:"flex",gap:5}}>
-                        <div style={{width:10,height:10,borderRadius:"50%",background:"#ef4444",opacity:0.5}}/>
-                        <div style={{width:10,height:10,borderRadius:"50%",background:"#f59e0b",opacity:0.5}}/>
-                        <div style={{width:10,height:10,borderRadius:"50%",background:"#10b981",opacity:0.5}}/>
-                      </div>
-                      <span style={{fontSize:10.5,color:"#1a2e44",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginLeft:4}}>Expression of Interest</span>
-                      {draftLoading&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
-                        <div style={{width:5,height:5,borderRadius:"50%",background:C.purple,animation:"pulse 1.2s infinite"}}/>
-                        <span style={{fontSize:10,color:C.purple,letterSpacing:"0.08em"}}>GENERATING</span>
-                      </div>}
-                    </div>
-                    <div style={{padding:"24px 28px",minHeight:260,fontFamily:"Inter,sans-serif",fontSize:13,lineHeight:2,color:"#6a8aaa",whiteSpace:"pre-wrap",background:"#04080f"}}>
-                      {draftLoading
-                        ?<span style={{color:C.purple}}><TypingText text="Drafting your Singapore expression of interest..."/></span>
-                        :draft?<TypingText text={draft} speed={5}/>:<span style={{color:"#0f1e30"}}>Draft will appear here...</span>}
-                    </div>
-                  </div>
+            {runError && <div className="pa-banner" role="alert"><b>The search did not complete.</b> {runError}</div>}
 
-                  {draft&&!draftLoading&&(
-                    <div style={{display:"flex",gap:10}}>
-                      <button className="btn-p" onClick={()=>navigator.clipboard.writeText(draft)}>⎘ Copy to Clipboard</button>
-                      <button className="btn-s" onClick={()=>generateDraft(draftOpp)}>↻ Regenerate</button>
-                      <a href={draftOpp.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn-s">↗ View Portal</a>
-                    </div>
-                  )}
-                </>
+            <section className="pa-card">
+              <div className="pa-card-h"><h2>Log</h2>{running && <span className="pa-hint">In progress</span>}</div>
+              <div className="pa-log" aria-live="polite">
+                {logs.length === 0 && <span>No activity yet. Run a search from Search setup.</span>}
+                {logs.map((log, i) => (
+                  <div key={i} className={log.type}><time>{log.ts}</time>{log.msg}</div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            </section>
+
+            {phase === "done" && !running && (
+              <div className="pa-actions">
+                {results.length > 0 && <button type="button" className="pa-btn primary" onClick={() => setActiveTab("results")}>View opportunities</button>}
+                <button type="button" className="pa-btn" onClick={() => setActiveTab("configure")}>Adjust search</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "results" && (
+          <div>
+            <div className="pa-head">
+              <div>
+                <h1>Opportunities</h1>
+                <p>{lastRun ? `Last searched ${lastRun.toLocaleString("en-SG", { dateStyle:"medium", timeStyle:"short" })}` : "Tenders matched and scored against the business profile."}</p>
+              </div>
+              {results.length > 0 && (
+                <div className="pa-actions">
+                  <button type="button" className="pa-btn" onClick={() => downloadCsv(sorted)}>Export CSV</button>
+                  <button type="button" className="pa-btn" onClick={runAgent} disabled={!canRun}>Run again</button>
+                </div>
               )}
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* ── STATUS BAR ──────────────────────────────────────── */}
-      <div style={{height:24,borderTop:"1px solid #0b1827",background:"#040a14",display:"flex",alignItems:"center",padding:"0 20px",gap:18,flexShrink:0}}>
-        <span style={{fontSize:10,color:"#0f1e30",fontWeight:600,letterSpacing:"0.06em"}}>GEEK-AI Procurement Intelligence v2.0</span>
-        <span style={{fontSize:10,color:"#0b1827"}}>|</span>
-        <span style={{fontSize:10,color:"#0f1e30"}}>🇸🇬 Singapore Market</span>
-        <span style={{fontSize:10,color:"#0b1827"}}>|</span>
-        <span style={{fontSize:10,color:"#0f1e30"}}>{PORTALS.length} portals indexed</span>
-        {results.length>0&&<>
-          <span style={{fontSize:10,color:"#0b1827"}}>|</span>
-          <span style={{fontSize:10,color:"#142a3f"}}>Last run: {new Date().toLocaleDateString("en-SG")}</span>
-        </>}
-        <span style={{marginLeft:"auto",fontSize:10,color:"#0f1e30",letterSpacing:"0.06em"}}>Powered by Claude AI</span>
-      </div>
+            {results.length === 0 ? (
+              <section className="pa-card pa-empty">
+                <b>{phase === "done" ? "No matching tenders found" : "No results yet"}</b>
+                <p>
+                  {phase === "done"
+                    ? "The search found no public listings that match. Many portals show full tender details only to signed-in suppliers. Try broader keywords or a different category."
+                    : "Set up a search and run it to see matching opportunities here."}
+                </p>
+                <button type="button" className="pa-btn primary" onClick={() => setActiveTab("configure")}>{phase === "done" ? "Adjust search" : "Go to search setup"}</button>
+              </section>
+            ) : (
+              <>
+                <section className="pa-card pa-stats">
+                  <div className="pa-stat"><span>Opportunities</span><b className="num">{results.length}</b></div>
+                  <div className="pa-stat"><span>High match ({HIGH_MATCH}%+)</span><b className="num">{highCount}</b></div>
+                  <div className="pa-stat"><span>Closing within {CLOSING_SOON_DAYS} days</span><b className="num">{closingSoon}</b></div>
+                  <div className="pa-stat"><span>Total stated budget</span><b className="num">{totalBudget > 0 ? `S$${Math.round(totalBudget / 1000).toLocaleString("en-SG")}K` : "—"}</b></div>
+                </section>
+
+                <section className="pa-card">
+                  <div className="pa-card-h">
+                    <div className="pa-toolbar">
+                      <label className="pa-hint" htmlFor="pa-min">Minimum match</label>
+                      <select id="pa-min" className="pa-in" value={filterScore} onChange={e => setFilterScore(+e.target.value)}>
+                        <option value={0}>Any</option>
+                        <option value={50}>50%+</option>
+                        <option value={70}>70%+</option>
+                        <option value={HIGH_MATCH}>{HIGH_MATCH}%+</option>
+                      </select>
+                    </div>
+                    <span className="pa-hint num">{sorted.length} of {results.length} shown</span>
+                  </div>
+                  <div className="pa-tablewrap">
+                    <table className="pa-table">
+                      <thead>
+                        <tr>
+                          <Th col="title">Opportunity</Th>
+                          <Th col="portal" className="pa-hide-sm">Portal</Th>
+                          <Th col="budget" className="pa-hide-sm">Budget</Th>
+                          <Th col="deadline">Deadline</Th>
+                          <Th col="relevance">Match</Th>
+                          <th><span style={{position:"absolute",left:-9999}}>Actions</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sorted.length === 0 && <tr><td colSpan={6} className="pa-sub" style={{textAlign:"center",padding:"32px 16px"}}>No opportunities at this match level.</td></tr>}
+                        {sorted.map(opp => {
+                          const open = expandedKey === opp._key;
+                          const url = safeUrl(opp.sourceUrl);
+                          return [
+                            <tr key={opp._key} className={`pa-row ${open ? "open" : ""}`} onClick={() => setExpandedKey(open ? null : opp._key)}>
+                              <td>
+                                <div className="pa-title">{opp.title}</div>
+                                <div className="pa-sub">{opp.agency}</div>
+                              </td>
+                              <td className="pa-hide-sm"><span className="pa-pill">{opp.portal || "—"}</span></td>
+                              <td className="pa-hide-sm num">{Number(opp.budget) > 0 ? fmtMoney(opp.budget) : <span className="pa-sub">Not stated</span>}</td>
+                              <td><Deadline value={opp.deadline} /></td>
+                              <td>
+                                <div className="pa-match"><span className="num">{opp.relevance}%</span><span className="pa-bar"><i style={{width:`${opp.relevance}%`}} /></span></div>
+                              </td>
+                              <td onClick={e => e.stopPropagation()}>
+                                <div className="pa-rowact">
+                                  <button type="button" className="pa-btn sm pa-hide-sm" onClick={() => generateDraft(opp)}>Draft</button>
+                                  <button type="button" className="pa-btn sm" aria-expanded={open} onClick={() => setExpandedKey(open ? null : opp._key)}>{open ? "Hide" : "Details"}</button>
+                                </div>
+                              </td>
+                            </tr>,
+                            open && (
+                              <tr key={`${opp._key}-d`} className="pa-detail">
+                                <td colSpan={6}>
+                                  <div className="pa-detail-grid">
+                                    <div>
+                                      <p>{opp.description || "No description available."}</p>
+                                      {opp.aiReason && <p className="pa-sub" style={{marginTop:10}}>Why it matches: {opp.aiReason}</p>}
+                                      {opp.tags.length > 0 && <div className="pa-tags">{opp.tags.map(t => <span key={t} className="pa-pill">{t}</span>)}</div>}
+                                    </div>
+                                    <div>
+                                      <dl className="pa-dl">
+                                        <dt>Reference</dt><dd>{opp.refNo || "Not stated"}</dd>
+                                        <dt>Category</dt><dd>{opp.category || "Not stated"}</dd>
+                                        <dt>Portal</dt><dd>{opp.portal || "Not stated"}</dd>
+                                        <dt>Budget</dt><dd className="num">{fmtMoney(opp.budget)}</dd>
+                                      </dl>
+                                      <div className="pa-actions" style={{marginTop:16}}>
+                                        <button type="button" className="pa-btn sm primary" onClick={() => generateDraft(opp)}>Draft expression of interest</button>
+                                        {url && <a className="pa-btn sm" href={url} target="_blank" rel="noopener noreferrer">Open listing ↗</a>}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          ];
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <p className="pa-note">Listings and match scores are produced by an AI model from public web search. Confirm the title, deadline, budget and reference on the official portal before bidding.</p>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === "draft" && (
+          <div className="pa-narrow">
+            <div className="pa-head">
+              <div>
+                <h1>Draft</h1>
+                <p>Expression of interest for the selected opportunity.</p>
+              </div>
+              {draftOpp && <button type="button" className="pa-btn" onClick={() => setActiveTab("results")}>Back to opportunities</button>}
+            </div>
+
+            {!draftOpp ? (
+              <section className="pa-card pa-empty">
+                <b>No opportunity selected</b>
+                <p>Choose Draft on any opportunity to generate an expression of interest.</p>
+                <button type="button" className="pa-btn primary" onClick={() => setActiveTab("results")}>View opportunities</button>
+              </section>
+            ) : (
+              <>
+                <section className="pa-card">
+                  <div className="pa-card-b">
+                    <div className="pa-title" style={{fontSize:15}}>{draftOpp.title}</div>
+                    <div className="pa-sub">{[draftOpp.agency, draftOpp.refNo, Number(draftOpp.budget) > 0 ? fmtMoney(draftOpp.budget) : null, draftOpp.deadline ? `Closes ${draftOpp.deadline}` : null].filter(Boolean).join("  ·  ")}</div>
+                  </div>
+                </section>
+
+                <section className="pa-card">
+                  <div className="pa-card-h"><h2>Expression of interest</h2><span className="pa-hint">{draftLoading ? "Drafting…" : "Editable"}</span></div>
+                  <textarea className="pa-in pa-draft" aria-label="Draft text" value={draftLoading ? "" : draft} placeholder={draftLoading ? "Drafting the expression of interest…" : ""} onChange={e => setDraft(e.target.value)} disabled={draftLoading} />
+                </section>
+
+                <div className="pa-actions">
+                  <button type="button" className="pa-btn primary" onClick={copyDraft} disabled={draftLoading || !draft}>{copied ? "Copied" : "Copy text"}</button>
+                  <button type="button" className="pa-btn" onClick={() => generateDraft(draftOpp)} disabled={draftLoading}>Regenerate</button>
+                  {safeUrl(draftOpp.sourceUrl) && <a className="pa-btn" href={safeUrl(draftOpp.sourceUrl)} target="_blank" rel="noopener noreferrer">Open listing ↗</a>}
+                </div>
+                <p className="pa-note">Review and edit the draft before sending. It is generated by an AI model from the listing summary and your business profile.</p>
+              </>
+            )}
+          </div>
+        )}
+      </main>
+
+      <footer className="pa-foot">GEEK-AI Procurement Intelligence · Singapore · Powered by Claude</footer>
     </div>
   );
 }
