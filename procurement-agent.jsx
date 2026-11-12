@@ -76,6 +76,7 @@ export default function GeekAI() {
   const [selectedPortals, setSelectedPortals] = useState(PORTALS.map(p => p.id));
   const [budget, setBudget] = useState("");
   const [category, setCategory] = useState("");
+  const [accessCode, setAccessCode] = useState(() => { try { return sessionStorage.getItem("geekai_access_code") || ""; } catch { return ""; } });
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -93,6 +94,21 @@ export default function GeekAI() {
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [logs]);
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
+
+  // All Claude calls go through our own server function (api/messages.js),
+  // which holds the API key and checks the access code.
+  const callClaude = async (payload) => {
+    try { sessionStorage.setItem("geekai_access_code", accessCode); } catch {}
+    const res = await fetch("/api/messages", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "x-access-code":accessCode },
+      body:JSON.stringify(payload)
+    });
+    let data;
+    try { data = await res.json(); } catch { throw new Error(`Server returned ${res.status}`); }
+    if (data.error) throw new Error(data.error.message);
+    return data;
+  };
   const addLog = (msg, type = "info") => setLogs(prev => [...prev, { msg, type, ts: new Date().toLocaleTimeString() }]);
   const togglePortal = id => setSelectedPortals(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   const toggleAll = () => setSelectedPortals(selectedPortals.length === PORTALS.length ? [] : PORTALS.map(p => p.id));
@@ -181,27 +197,12 @@ Then return all real tenders found as a JSON array.`;
     let generated = [];
     try {
       addLog("📡 Calling AI with web search...", "ai");
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "anthropic-dangerous-direct-browser-access":"true"
-        },
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:6000,
-          system:systemPrompt,
-          tools:[{ type:"web_search_20250305", name:"web_search" }],
-          messages:[{role:"user",content:userMsg}]
-        })
+      const data = await callClaude({
+        max_tokens:16000,
+        system:systemPrompt,
+        web_search:true,
+        messages:[{role:"user",content:userMsg}]
       });
-
-      const data = await res.json();
-
-      if (data.error) {
-        addLog(`⚠️ API error: ${data.error.message}`, "warn");
-        throw new Error(data.error.message);
-      }
 
       // Extract only text blocks (ignore tool_use/tool_result blocks)
       const raw = (data.content || [])
@@ -209,7 +210,7 @@ Then return all real tenders found as a JSON array.`;
         .map(c => c.text || "")
         .join("") || "";
 
-      addLog(`📦 Response received (${raw.length} chars, ${(data.content||[]).filter(c=>c.type==="tool_use").length} searches performed)`, "info");
+      addLog(`📦 Response received (${raw.length} chars, ${(data.content||[]).filter(c=>c.type==="server_tool_use"&&c.name==="web_search").length} searches performed)`, "info");
 
       const cleaned = raw.replace(/```json|```/g,"").trim();
       const start = cleaned.indexOf("[");
@@ -263,17 +264,13 @@ Then return all real tenders found as a JSON array.`;
   const generateDraft = async (opp) => {
     setDraftOpp(opp); setDraft(""); setDraftLoading(true); setActiveTab("draft");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:1000,
+      const data = await callClaude({
+          max_tokens:4000,
           system:"You are a professional bid writer for a Singapore-based ecommerce company. Write formal expressions of interest following Singapore government/corporate procurement norms.",
-          messages:[{role:"user", content:`Write a concise Expression of Interest for this Singapore procurement opportunity.\n\nOur Business: ${businessDesc}\nOpportunity: ${opp.title}\nAgency: ${opp.agency}\nBudget: SGD ${opp.budget.toLocaleString()}\nRef: ${opp.refNo}\nDescription: ${opp.description}\n\n3 paragraphs: 1) Company intro & fit, 2) Capabilities & SG track record, 3) Professional closing. Under 260 words. Formal Singapore business tone.`}]
-        })
+          messages:[{role:"user", content:`Write a concise Expression of Interest for this Singapore procurement opportunity.\n\nOur Business: ${businessDesc}\nOpportunity: ${opp.title}\nAgency: ${opp.agency}\nBudget: ${opp.budget ? `SGD ${Number(opp.budget).toLocaleString()}` : "not stated"}\nRef: ${opp.refNo}\nDescription: ${opp.description}\n\n3 paragraphs: 1) Company intro & fit, 2) Capabilities & SG track record, 3) Professional closing. Under 260 words. Formal Singapore business tone.`}]
       });
-      const data = await res.json();
-      setDraft(data.content?.map(c=>c.text||"").join("") || "Draft unavailable.");
-    } catch { setDraft("Unable to generate draft. Please try again."); }
+      setDraft((data.content||[]).filter(c=>c.type==="text").map(c=>c.text||"").join("") || "Draft unavailable.");
+    } catch(e) { setDraft(`Unable to generate draft: ${e.message}`); }
     setDraftLoading(false);
   };
 
@@ -477,8 +474,19 @@ Then return all real tenders found as a JSON array.`;
                 </div>
               </div>
 
+              {/* Access code */}
+              <div className="panel">
+                <div style={{padding:"12px 16px",borderBottom:"1px solid #0b1827"}}>
+                  <span className="stl">Access Code</span>
+                </div>
+                <div style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14}}>
+                  <input className="fi" type="password" autoComplete="off" style={{maxWidth:260}} placeholder="Enter access code" value={accessCode} onChange={e=>setAccessCode(e.target.value)}/>
+                  <span style={{fontSize:11.5,color:"#2a3f56"}}>Required to run the agent and generate drafts.</span>
+                </div>
+              </div>
+
               <div style={{display:"flex",alignItems:"center",gap:14,paddingTop:4}}>
-                <button className="btn-p" onClick={runAgent} disabled={running||selectedPortals.length===0||!businessDesc.trim()}>
+                <button className="btn-p" onClick={runAgent} disabled={running||selectedPortals.length===0||!businessDesc.trim()||!accessCode.trim()}>
                   {running?"⟳  Running...":"⚡  Run Procurement Agent"}
                 </button>
                 <span style={{fontSize:11.5,color:"#1e3349"}}>{selectedPortals.length} portals · AI relevance scoring · Bid draft generation</span>
@@ -686,7 +694,7 @@ Then return all real tenders found as a JSON array.`;
                           <span style={{margin:"0 8px",color:"#0f1e30"}}>·</span>
                           <span style={{fontFamily:"'DM Mono',monospace",color:"#1a2e44"}}>{draftOpp.refNo}</span>
                           <span style={{margin:"0 8px",color:"#0f1e30"}}>·</span>
-                          <span style={{color:C.green,fontWeight:600}}>S${draftOpp.budget.toLocaleString()}</span>
+                          <span style={{color:C.green,fontWeight:600}}>{draftOpp.budget ? `S$${Number(draftOpp.budget).toLocaleString()}` : "Budget TBC"}</span>
                         </div>
                       </div>
                       <div style={{textAlign:"right"}}>
