@@ -7,9 +7,11 @@ It is a single React component ([procurement-agent.jsx](procurement-agent.jsx)) 
 ## What it does
 
 1. **Configure** – Describe your business, add optional keywords, a category and a budget range, and choose which procurement portals to cover.
-2. **Run** – The agent asks Claude to search the web for currently open Singapore tenders that match, and streams its progress to a terminal-style log.
-3. **Review** – Matching tenders appear in a sortable table with agency, budget, deadline, reference number, a 0–100% relevance score and a one-line reason for the match. Deadlines within 14 days are highlighted.
-4. **Draft** – One click generates a formal, three-paragraph Expression of Interest for any tender, ready to copy.
+2. **Run** – The agent asks Claude to search the web for currently open Singapore tenders that match, and records its progress in an activity log.
+3. **Review** – Matching tenders appear in a sortable, filterable table with agency, budget, deadline, reference number, a 0–100% match score and a one-line reason for the match. Deadlines within 14 days are highlighted, and the list can be exported to CSV.
+4. **Draft** – One click generates a formal, three-paragraph Expression of Interest for any tender, which you can edit in place and copy.
+
+The interface is deliberately plain: one neutral palette, light and dark themes that follow the system setting, keyboard-accessible controls, and a layout that works down to phone width.
 
 ## Portals covered
 
@@ -35,7 +37,7 @@ Business profile + keywords + portals
 
 - **Sourcing** – One request to the Anthropic Messages API (through `api/messages.js`) with the `web_search` tool. Claude runs several searches and returns a JSON array of tenders. If the response is cut off, complete records are salvaged from the partial output.
 - **Scoring** – Claude assigns each tender a relevance score and a short justification based on the business profile.
-- **Real results only** – Claude is told not to fabricate tenders, and anything it marks as simulated is removed before display.
+- **Real results only** – Claude is told not to fabricate tenders, anything it marks as simulated is removed before display, and source links are shown only when they are ordinary web addresses.
 - **Drafting** – A second Claude call writes the Expression of Interest in a formal Singapore business tone.
 
 ## Running it
@@ -72,7 +74,7 @@ npx vercel dev
 
 ## Limitations
 
-- **Public listings only.** The agent finds tenders through web search. It does not log in to any portal, and many portals show full tender details only to signed-in suppliers, so results may be sparse. The per-portal "Scanning…" lines in the log are progress messages, not direct connections to each portal.
+- **Public listings only.** The agent finds tenders through web search. It does not log in to any portal, and many portals show full tender details only to signed-in suppliers, so results may be sparse. The selected portals tell the model where to focus; the app does not connect to each portal directly.
 - **Verify before bidding.** Tender details and relevance scores are produced by an AI model from search results. Always confirm the title, deadline, budget and reference number on the official portal.
 - **Drafts are starting points.** Review and edit every Expression of Interest before submitting it.
 - **Singapore only.** Portals, prompts and tone are specific to the Singapore market.
