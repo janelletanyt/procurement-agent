@@ -1,5 +1,6 @@
 {
   "functions": {
-    "api/messages.js": { "maxDuration": 300 }
+    "api/messages.js": { "maxDuration": 300 },
+    "api/search.js": { "maxDuration": 60 }
   }
 }
