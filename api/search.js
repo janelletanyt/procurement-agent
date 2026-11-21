@@ -9,9 +9,10 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 const ENDPOINT = "https://api.langsearch.com/v1/web-search";
 const FRESHNESS = ["oneDay", "oneWeek", "oneMonth", "oneYear", "noLimit"];
-const MAX_QUERIES = 16;
+const MAX_QUERIES = 24;
 const RESULTS_PER_QUERY = 8;
-const MAX_RESULTS = 60;
+const MAX_RESULTS = 80;
+const DOMAIN = /^(?=.{4,100}$)[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 const TEXT_CHARS = 1200;
 const BATCH_SIZE = 3;      // new LangSearch accounts start at 5 requests per second
 const BATCH_PAUSE_MS = 700;
@@ -21,14 +22,19 @@ const codeMatches = (given) => timingSafeEqual(sha(given), sha(process.env.ACCES
 const fail = (res, status, message, code) => res.status(status).json({ error: { message, code } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function searchOnce(query, freshness) {
+const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ""); } catch { return ""; } };
+const onDomains = (url, domains) => { const h = hostOf(url); return domains.some((d) => h === d || h.endsWith(`.${d}`)); };
+
+// Each query is { query, domains }. Results are restricted to those domains by LangSearch
+// (includeDomains) and checked again here, so nothing from another site gets through.
+async function searchOnce({ query, domains }, freshness) {
   const upstream = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${process.env.LANGSEARCH_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ query, count: RESULTS_PER_QUERY, freshness, contents: { text: { maxCharacters: TEXT_CHARS } } }),
+    body: JSON.stringify({ query, count: RESULTS_PER_QUERY, freshness, includeDomains: domains, contents: { text: { maxCharacters: TEXT_CHARS } } }),
     signal: AbortSignal.timeout(20000),
   });
   const data = await upstream.json().catch(() => ({}));
@@ -37,7 +43,7 @@ async function searchOnce(query, freshness) {
     err.status = upstream.status;
     throw err;
   }
-  return data.data?.webPages?.value || [];
+  return (data.data?.webPages?.value || []).filter((r) => r?.url && onDomains(r.url, domains));
 }
 
 export default async function handler(req, res) {
@@ -48,10 +54,13 @@ export default async function handler(req, res) {
 
   const body = req.body || {};
   const queries = (Array.isArray(body.queries) ? body.queries : [])
-    .filter((q) => typeof q === "string" && q.trim())
-    .map((q) => q.trim().slice(0, 300))
+    .map((q) => ({
+      query: typeof q?.query === "string" ? q.query.trim().slice(0, 300) : "",
+      domains: (Array.isArray(q?.domains) ? q.domains : []).filter((d) => typeof d === "string" && DOMAIN.test(d)).map((d) => d.toLowerCase()).slice(0, 6),
+    }))
+    .filter((q) => q.query && q.domains.length > 0)
     .slice(0, MAX_QUERIES);
-  if (queries.length === 0) return fail(res, 400, "queries is required");
+  if (queries.length === 0) return fail(res, 400, "queries is required: each needs a query and at least one portal domain");
   const freshness = FRESHNESS.includes(body.freshness) ? body.freshness : "oneMonth";
 
   const seen = new Set();
