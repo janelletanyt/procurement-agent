@@ -718,7 +718,7 @@ Portals of interest: ${portalList}`;
             ) : (
               <>
                 {resultMode === "keyword" && (
-                  <div className="pa-banner pa-info" role="status"><b>Search-only mode.</b> AI scoring is not set up on the server, so these are pages from the selected portals that mention tenders, ranked by how many of your keywords they contain. They have not been checked to be open, relevant tenders. Add an Anthropic API key on the server to turn on AI scoring, deadlines, budgets and drafts.</div>
+                  <div className="pa-banner pa-info" role="status"><b>Search-only mode.</b> AI scoring is not set up on the server, so these are pages from the selected portals that mention tenders, ranked by how many of your keywords they contain. They have not been checked to be open, relevant tenders. Add a Gemini or Anthropic API key on the server to turn on AI scoring, deadlines, budgets and drafts.</div>
                 )}
                 <section className="pa-card pa-stats">
                   <div className="pa-stat"><span>Opportunities</span><b className="num">{results.length}</b></div>
@@ -861,7 +861,7 @@ Portals of interest: ${portalList}`;
         )}
       </main>
 
-      <footer className="pa-foot">GEEK-AI Procurement Intelligence · Singapore · Search by LangSearch · Analysis by Claude</footer>
+      <footer className="pa-foot">GEEK-AI Procurement Intelligence · Singapore · Search by LangSearch · AI-assisted analysis</footer>
     </div>
   );
 }
