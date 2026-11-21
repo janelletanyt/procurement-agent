@@ -97,7 +97,7 @@ npx vercel dev
 
 ## Customising
 
-- `BUSINESS_PROFILE` – the default company description.
+- `PROFILE_PLACEHOLDER` – the hint shown in the empty business profile box.
 - `PORTALS` – the list of portals shown on the Configure tab.
 - `systemPrompt` / `userMsg` inside `runAgent` – the search instructions and output schema.
 - `ANTHROPIC_MODEL` environment variable – which Claude model is used.
