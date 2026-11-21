@@ -42,11 +42,14 @@ Business profile + keywords + portals
 - **Extracting and scoring** – Claude reads those pages (through `api/messages.js`) and keeps only specific, open tenders from Singapore buyers that are relevant to the business and have enough detail to act on. Each gets a relevance score, a short justification and a suggested next step. If the response is cut off, complete records are salvaged from the partial output.
 - **Real results only** – Claude is told to use only what is in the search results and not to fabricate tenders. A tender is shown only if it links to a page LangSearch actually returned from a selected portal, and tenders whose closing date has passed are dropped.
 
+The AI step runs on either Google Gemini (which has a free tier) or Claude. "Claude" above means whichever is configured.
+
 The app adapts to which keys are set on the server:
 
 | Keys set | Behaviour |
 |---|---|
-| `LANGSEARCH_API_KEY` + `ANTHROPIC_API_KEY` | LangSearch searches, Claude extracts, scores and drafts (recommended) |
+| `LANGSEARCH_API_KEY` + `GEMINI_API_KEY` | LangSearch searches, Gemini extracts, scores and drafts. Free within both services' limits |
+| `LANGSEARCH_API_KEY` + `ANTHROPIC_API_KEY` | LangSearch searches, Claude extracts, scores and drafts (paid). Claude is used when both AI keys are set |
 | `LANGSEARCH_API_KEY` only | Search-only mode: pages from the selected portals that mention tenders, ranked by keyword overlap. Nothing checks that they are open, relevant tenders, and there are no drafts. Free to run |
 | `ANTHROPIC_API_KEY` only | Claude runs its own web searches with its `web_search` tool |
 
@@ -60,7 +63,7 @@ The repo is a small Vite + React app with two serverless functions, ready to dep
 |---|---|
 | `procurement-agent.jsx` | The whole user interface and agent logic |
 | `api/search.js` | Server function that runs web searches through the LangSearch API. It keeps the LangSearch key on the server and rejects callers without the access code |
-| `api/messages.js` | Server function that forwards requests to the Anthropic API. It keeps the API key on the server and rejects callers without the access code |
+| `api/messages.js` | Server function that sends AI requests to Gemini or Claude. It keeps the API keys on the server and rejects callers without the access code |
 | `src/main.jsx`, `index.html` | App entry point |
 
 ### Deploy on Vercel
@@ -69,8 +72,11 @@ The repo is a small Vite + React app with two serverless functions, ready to dep
 2. Add environment variables under **Settings → Environment Variables**:
    - `ACCESS_CODE` (required) – any code you choose; visitors must enter it on the Search setup tab before the agent will run
    - `LANGSEARCH_API_KEY` – a free key from the [LangSearch dashboard](https://langsearch.com/dashboard)
-   - `ANTHROPIC_API_KEY` – an Anthropic API key from [platform.claude.com](https://platform.claude.com)
-3. Deploy. Optionally set `ANTHROPIC_MODEL` to change the Claude model (default `claude-sonnet-5-5`).
+   - `GEMINI_API_KEY` – a Google Gemini API key from [Google AI Studio](https://aistudio.google.com/api-keys), free tier available, **or**
+   - `ANTHROPIC_API_KEY` – an Anthropic API key from [platform.claude.com](https://platform.claude.com) (paid)
+3. Deploy. Optionally set `GEMINI_MODEL` (default `gemini-3.5-flash-lite`) or `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`), and `AI_PROVIDER` (`gemini` or `anthropic`) to choose when both keys are set.
+
+On Gemini's free tier, Google states that content sent to the API is used to improve its products, so do not put confidential business details in the profile when using a free key.
 
 Environment variables only apply to new deployments, so redeploy after adding or changing one.
 
