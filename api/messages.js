@@ -23,7 +23,10 @@ export default async function handler(req, res) {
   if (!codeMatches(req.headers["x-access-code"])) return fail(res, 401, "Wrong or missing access code.", "bad_access_code");
   if (!process.env.ANTHROPIC_API_KEY) return fail(res, 501, "AI scoring and drafting are not configured: set ANTHROPIC_API_KEY in Vercel.", "ai_not_configured");
 
-  const { system, messages, max_tokens, web_search } = req.body || {};
+  const { system, messages, max_tokens, web_search, domains } = req.body || {};
+  const allowedDomains = (Array.isArray(domains) ? domains : [])
+    .filter((d) => typeof d === "string" && /^(?=.{4,100}$)[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d))
+    .slice(0, 40);
   if (!Array.isArray(messages) || messages.length === 0) return fail(res, 400, "messages is required");
 
   const body = {
@@ -33,7 +36,11 @@ export default async function handler(req, res) {
     fallbacks: "default",
   };
   if (typeof system === "string" && system) body.system = system;
-  if (web_search) body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }];
+  if (web_search) {
+    const tool = { type: "web_search_20260209", name: "web_search", max_uses: 8 };
+    if (allowedDomains.length > 0) tool.allowed_domains = allowedDomains;
+    body.tools = [tool];
+  }
 
   try {
     const content = [];
