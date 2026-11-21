@@ -188,6 +188,13 @@ textarea.pa-in{resize:vertical;line-height:1.65;display:block}
 .pa-pill{font-size:11.5px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:1px 9px;white-space:nowrap}
 .pa-note{font-size:12.5px;color:var(--muted);margin-top:14px;max-width:80ch}
 
+.pa-reviewed{margin-top:16px}
+.pa-reviewed summary{padding:13px 20px;font-size:13px;font-weight:600;cursor:pointer}
+.pa-reviewed summary .pa-hint{font-weight:400;margin-left:8px}
+.pa-reviewed ul{list-style:none;margin:0;padding:0 20px 8px}
+.pa-reviewed li{padding:10px 0;border-top:1px solid var(--border)}
+.pa-reviewed a{color:var(--accent);text-decoration:none;word-break:break-word}
+.pa-reviewed a:hover{text-decoration:underline}
 .pa-empty{padding:64px 24px;text-align:center}
 .pa-empty b{display:block;font-size:15px;font-weight:600;margin-bottom:6px}
 .pa-empty p{color:var(--muted);max-width:52ch;margin:0 auto 20px}
@@ -284,6 +291,7 @@ export default function GeekAI() {
   const [lastRun, setLastRun] = useState(null);
   const [logs, setLogs] = useState([]);
   const [results, setResults] = useState([]);
+  const [reviewed, setReviewed] = useState([]);
   const [activeTab, setActiveTab] = useState("configure");
   const [expandedKey, setExpandedKey] = useState(null);
   const [draftOpp, setDraftOpp] = useState(null);
@@ -423,14 +431,14 @@ Portals of interest: ${portalList}`;
 
     let generated = [];
     let mode = "ai";
+    let pages = null;
     try {
       setPhase("searching");
-      let pages = null;
       try {
         addLog(`Searching the ${selPortals.length} selected ${selPortals.length === 1 ? "portal" : "portals"} with LangSearch (${queries.length} queries)`);
         const s = await callApi("/api/search", { queries, freshness });
         pages = (s.results || []).filter(p => portalForUrl(p.url, selPortals));
-        addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found on the selected portals${s.failed ? `; ${s.failed} of ${s.queries} queries failed` : ""}`);
+        addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found on the selected portals${s.failed ? `; ${s.failed} of ${s.queries} queries failed after retries (${s.failureReason || "unknown error"})` : ""}`, s.failed ? "warn" : "info");
       } catch(e) {
         if (e.code !== "search_not_configured") throw e;
         addLog("LangSearch is not set up on the server; using Claude web search instead", "warn");
@@ -459,7 +467,9 @@ Portals of interest: ${portalList}`;
             messages:[{role:"user",content:`${brief}\n\nSearch results (JSON):\n${JSON.stringify(pages)}`}]
           });
           const known = new Set(pages.map(p => p.url));
-          generated = parseTenders(textOf(data), m => addLog(m, "warn")).map(o => ({ ...o, sourceUrl:known.has(o.sourceUrl) ? o.sourceUrl : null }));
+          const candidates = parseTenders(textOf(data), m => addLog(m, "warn"));
+          addLog(`The AI model identified ${candidates.length} candidate ${candidates.length === 1 ? "tender" : "tenders"} in those pages`);
+          generated = candidates.map(o => ({ ...o, sourceUrl:known.has(o.sourceUrl) ? o.sourceUrl : null }));
         } catch(e) {
           if (e.code !== "ai_not_configured") throw e;
           mode = "keyword";
@@ -475,10 +485,14 @@ Portals of interest: ${portalList}`;
       addLog(`Search failed: ${e.message}`, "warn");
     }
 
-    const scored = generated
-      .filter(o => o && o.isReal !== false && o.title)
-      // Keep only tenders that link to a page on a selected portal and have not already closed.
-      .filter(o => portalForUrl(o.sourceUrl, selPortals) && !(daysLeft(o.deadline) < 0))
+    // Keep only tenders that link to a page on a selected portal and have not already closed.
+    const valid = generated.filter(o => o && o.isReal !== false && o.title);
+    const linked = valid.filter(o => portalForUrl(o.sourceUrl, selPortals));
+    const stillOpen = linked.filter(o => !(daysLeft(o.deadline) < 0));
+    if (mode === "ai" && valid.length > stillOpen.length) {
+      addLog(`${valid.length - stillOpen.length} removed: ${valid.length - linked.length} without a link to a page on a selected portal, ${linked.length - stillOpen.length} already closed`, "warn");
+    }
+    const scored = stillOpen
       .map((o, i) => ({ ...o, _key:i, portal:portalForUrl(o.sourceUrl, selPortals).name, relevance:Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))), tags:Array.isArray(o.tags) ? o.tags : [] }))
       .sort((a,b) => b.relevance - a.relevance);
 
@@ -490,7 +504,7 @@ Portals of interest: ${portalList}`;
       addLog(`Top match: ${scored[0].title} (${scored[0].relevance}%)`, "ok");
     }
 
-    setResults(scored); setResultMode(mode); setPhase("done"); setRunning(false); setLastRun(new Date());
+    setResults(scored); setReviewed(pages || []); setResultMode(mode); setPhase("done"); setRunning(false); setLastRun(new Date());
     if (scored.length > 0) setActiveTab("results");
   };
 
@@ -526,6 +540,21 @@ Portals of interest: ${portalList}`;
   const totalBudget = results.reduce((s,r) => s + (Number(r.budget) || 0), 0);
   const stepIndex = STEPS.findIndex(s => s.id === phase);
   const canRun = !running && selectedPortals.length > 0 && businessDesc.trim() && accessCode.trim();
+
+  // The raw pages the search returned from the selected portals, before any AI filtering.
+  const reviewedBlock = reviewed.length > 0 && (
+    <details className="pa-card pa-reviewed">
+      <summary>Pages reviewed <span className="pa-hint num">{reviewed.length} from the selected portals, before filtering</span></summary>
+      <ul>
+        {reviewed.map(p => (
+          <li key={p.url}>
+            {safeUrl(p.url) ? <a href={safeUrl(p.url)} target="_blank" rel="noopener noreferrer">{p.name || p.url}</a> : <span>{p.name || p.url}</span>}
+            <div className="pa-sub">{[hostOf(p.url), p.datePublished ? String(p.datePublished).slice(0, 10) : null].filter(Boolean).join("  ·  ")}</div>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
 
   const Th = ({ col, children, className }) => (
     <th className={className} aria-sort={sortBy === col ? (sortDir === "asc" ? "ascending" : "descending") : undefined}>
@@ -706,6 +735,7 @@ Portals of interest: ${portalList}`;
             </div>
 
             {results.length === 0 ? (
+              <>
               <section className="pa-card pa-empty">
                 <b>{phase === "done" ? "No matching tenders found" : "No results yet"}</b>
                 <p>
@@ -715,6 +745,8 @@ Portals of interest: ${portalList}`;
                 </p>
                 <button type="button" className="pa-btn primary" onClick={() => setActiveTab("configure")}>{phase === "done" ? "Adjust search" : "Go to search setup"}</button>
               </section>
+              {reviewedBlock}
+              </>
             ) : (
               <>
                 {resultMode === "keyword" && (
@@ -814,6 +846,7 @@ Portals of interest: ${portalList}`;
                     ? "Listings and match scores are produced by an AI model from public web search. Confirm the title, deadline, budget and reference on the official portal before bidding."
                     : "These pages come only from the selected portals but have not been checked by AI, so some will not be open tenders. Open each listing to check it on the portal."}
                 </p>
+                {resultMode === "ai" && reviewedBlock}
               </>
             )}
           </div>
