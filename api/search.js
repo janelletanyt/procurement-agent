@@ -14,8 +14,10 @@ const RESULTS_PER_QUERY = 8;
 const MAX_RESULTS = 80;
 const DOMAIN = /^(?=.{4,100}$)[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 const TEXT_CHARS = 1200;
-const BATCH_SIZE = 3;      // new LangSearch accounts start at 5 requests per second
-const BATCH_PAUSE_MS = 700;
+const BATCH_SIZE = 2;      // stay well under LangSearch's 5 requests per second for new accounts
+const BATCH_PAUSE_MS = 600;
+const MAX_ATTEMPTS = 3;    // per query, for rate limits and temporary server errors
+const TIME_BUDGET_MS = 50000;
 
 const sha = (s) => createHash("sha256").update(String(s ?? "")).digest();
 const codeMatches = (given) => timingSafeEqual(sha(given), sha(process.env.ACCESS_CODE));
@@ -41,9 +43,24 @@ async function searchOnce({ query, domains }, freshness) {
   if (!upstream.ok || String(data.code ?? "200") !== "200") {
     const err = new Error(data.message || data.msg || `LangSearch returned ${upstream.status}`);
     err.status = upstream.status;
+    err.retryAfter = Number(upstream.headers.get("retry-after")) || 0;
     throw err;
   }
   return (data.data?.webPages?.value || []).filter((r) => r?.url && onDomains(r.url, domains));
+}
+
+// Retries a query when LangSearch says it was rate limited (429) or had a temporary fault (5xx, timeout).
+async function searchWithRetry(q, freshness, deadline) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await searchOnce(q, freshness);
+    } catch (e) {
+      const retryable = e.status === 429 || e.status >= 500 || e.name === "TimeoutError" || e.name === "AbortError";
+      const wait = Math.min(Math.max(e.retryAfter * 1000, 1200 * attempt), 5000) + Math.floor(Math.random() * 400);
+      if (!retryable || attempt >= MAX_ATTEMPTS || Date.now() + wait > deadline) throw e;
+      await sleep(wait);
+    }
+  }
 }
 
 export default async function handler(req, res) {
@@ -68,9 +85,11 @@ export default async function handler(req, res) {
   let failed = 0;
   let lastError = null;
 
+  const deadline = Date.now() + TIME_BUDGET_MS;
   for (let i = 0; i < queries.length; i += BATCH_SIZE) {
     if (i > 0) await sleep(BATCH_PAUSE_MS);
-    const settled = await Promise.allSettled(queries.slice(i, i + BATCH_SIZE).map((q) => searchOnce(q, freshness)));
+    if (Date.now() > deadline) { failed += queries.length - i; lastError = new Error("ran out of time"); break; }
+    const settled = await Promise.allSettled(queries.slice(i, i + BATCH_SIZE).map((q) => searchWithRetry(q, freshness, deadline)));
     for (const s of settled) {
       if (s.status === "rejected") { failed++; lastError = s.reason; continue; }
       for (const r of s.value) {
@@ -91,5 +110,6 @@ export default async function handler(req, res) {
     const status = lastError?.status >= 400 ? lastError.status : 502;
     return fail(res, status, `LangSearch search failed: ${lastError?.message || "unknown error"}`, "search_failed");
   }
-  return res.status(200).json({ results, queries: queries.length, failed });
+  const failureReason = failed ? (lastError?.status === 429 ? "rate limit reached" : String(lastError?.message || "unknown error").slice(0, 120)) : null;
+  return res.status(200).json({ results, queries: queries.length, failed, failureReason });
 }
