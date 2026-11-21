@@ -188,6 +188,12 @@ textarea.pa-in{resize:vertical;line-height:1.65;display:block}
 .pa-pill{font-size:11.5px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:1px 9px;white-space:nowrap}
 .pa-note{font-size:12.5px;color:var(--muted);margin-top:14px;max-width:80ch}
 
+.pa-queries{border-top:1px solid var(--border)}
+.pa-queries summary{padding:13px 20px;font-size:13px;font-weight:600;cursor:pointer}
+.pa-queries summary .pa-hint{font-weight:400;margin-left:8px}
+.pa-queries .pa-table td{padding:9px 16px;font-size:13px}
+.pa-pill-on{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+.pa-reviewed .pa-pill{margin-right:6px}
 .pa-reviewed{margin-top:16px}
 .pa-reviewed summary{padding:13px 20px;font-size:13px;font-weight:600;cursor:pointer}
 .pa-reviewed summary .pa-hint{font-weight:400;margin-left:8px}
@@ -292,6 +298,7 @@ export default function GeekAI() {
   const [logs, setLogs] = useState([]);
   const [results, setResults] = useState([]);
   const [reviewed, setReviewed] = useState([]);
+  const [runInfo, setRunInfo] = useState(null);
   const [activeTab, setActiveTab] = useState("configure");
   const [expandedKey, setExpandedKey] = useState(null);
   const [draftOpp, setDraftOpp] = useState(null);
@@ -401,8 +408,19 @@ Include a tender only if ALL of these hold:
 
 Use only information present in the search results. Do not invent tenders, deadlines, budgets or reference numbers: use null (or an empty string for refNo) when a detail is not in the text. It is correct to return few or no tenders when the results do not contain real ones.
 
-Return ONLY a raw JSON array. Each object:
+Return ONLY a raw JSON array containing one object for EVERY search result you were given.
+
+For a result that does not qualify, return this short form:
 {
+  "isTender": false,
+  "sourceUrl": "the url of the search result, copied exactly",
+  "kind": "listing" if the page is a list or index of current tenders that a supplier should open to see them, otherwise "other",
+  "reason": "why it does not qualify, max 15 words"
+}
+
+For a qualifying tender, return:
+{
+  "isTender": true,
   "id": number,
   "portal": "portal short name",
   "title": "tender title as found",
@@ -418,9 +436,7 @@ Return ONLY a raw JSON array. Each object:
   "aiReason": "why this matches the business, max 12 words",
   "nextStep": "what the supplier should do next to respond, taken from the page, max 20 words",
   "isReal": true
-}
-
-If nothing qualifies, return an empty array [].`;
+}`;
 
     const brief = `Today's date: ${new Date().toISOString().slice(0,10)}
 Business Profile: ${businessDesc}
@@ -432,16 +448,20 @@ Portals of interest: ${portalList}`;
     let generated = [];
     let mode = "ai";
     let pages = null;
+    let queryDetail = null;
+    let engine = "LangSearch web search";
     try {
       setPhase("searching");
       try {
         addLog(`Searching the ${selPortals.length} selected ${selPortals.length === 1 ? "portal" : "portals"} with LangSearch (${queries.length} queries)`);
         const s = await callApi("/api/search", { queries, freshness });
         pages = (s.results || []).filter(p => portalForUrl(p.url, selPortals));
+        queryDetail = s.detail || null;
         addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found on the selected portals${s.failed ? `; ${s.failed} of ${s.queries} queries failed after retries (${s.failureReason || "unknown error"})` : ""}`, s.failed ? "warn" : "info");
       } catch(e) {
         if (e.code !== "search_not_configured") throw e;
         addLog("LangSearch is not set up on the server; using Claude web search instead", "warn");
+        engine = "Claude web search";
       }
 
       if (pages === null) {
@@ -468,8 +488,15 @@ Portals of interest: ${portalList}`;
           });
           const known = new Set(pages.map(p => p.url));
           const candidates = parseTenders(textOf(data), m => addLog(m, "warn"));
-          addLog(`The AI model identified ${candidates.length} candidate ${candidates.length === 1 ? "tender" : "tenders"} in those pages`);
-          generated = candidates.map(o => ({ ...o, sourceUrl:known.has(o.sourceUrl) ? o.sourceUrl : null }));
+          // The model returns a verdict for every page: either a tender, or a short reason it was left out.
+          const verdicts = new Map();
+          for (const c of candidates) if (c && c.isTender === false && c.sourceUrl) verdicts.set(c.sourceUrl, { kind:c.kind === "listing" ? "listing" : "other", reason:String(c.reason || "") });
+          const tenders = candidates.filter(c => c && c.isTender !== false && c.title);
+          for (const t of tenders) if (known.has(t.sourceUrl)) verdicts.set(t.sourceUrl, { kind:"tender", reason:"" });
+          pages = pages.map(p => ({ ...p, verdict:verdicts.get(p.url) || null }));
+          const listings = pages.filter(p => p.verdict?.kind === "listing").length;
+          addLog(`The AI model read ${pages.length} ${pages.length === 1 ? "page" : "pages"}: ${tenders.length} candidate ${tenders.length === 1 ? "tender" : "tenders"}, ${listings} tender listing ${listings === 1 ? "page" : "pages"}, ${Math.max(0, pages.length - tenders.length - listings)} not relevant`);
+          generated = tenders.map(o => ({ ...o, sourceUrl:known.has(o.sourceUrl) ? o.sourceUrl : null }));
         } catch(e) {
           if (e.code !== "ai_not_configured") throw e;
           mode = "keyword";
@@ -504,6 +531,17 @@ Portals of interest: ${portalList}`;
       addLog(`Top match: ${scored[0].title} (${scored[0].relevance}%)`, "ok");
     }
 
+    setRunInfo({
+      keywords: keywords ? keywords : `${searchTerms} (taken from the business profile)`,
+      category: category || "All categories",
+      budget: budget || "Not specified",
+      freshness: FRESHNESS.find(f => f.id === freshness)?.label || freshness,
+      portals: selPortals.map(p => p.name),
+      domains: allowedDomains,
+      engine,
+      scoring: mode === "ai" ? "AI model" : "Keyword overlap only (no AI key on the server)",
+      queries: queryDetail,
+    });
     setResults(scored); setReviewed(pages || []); setResultMode(mode); setPhase("done"); setRunning(false); setLastRun(new Date());
     if (scored.length > 0) setActiveTab("results");
   };
@@ -541,6 +579,44 @@ Portals of interest: ${portalList}`;
   const stepIndex = STEPS.findIndex(s => s.id === phase);
   const canRun = !running && selectedPortals.length > 0 && businessDesc.trim() && accessCode.trim();
 
+  // Exactly what the last search used: the parameters, and every query sent with what came back.
+  const searchDetailsBlock = runInfo && (
+    <section className="pa-card" style={{marginTop:16}}>
+      <div className="pa-card-h"><h2>Search details</h2><span className="pa-hint">What the last search used</span></div>
+      <div className="pa-card-b">
+        <dl className="pa-dl">
+          <dt>Keywords</dt><dd>{runInfo.keywords}</dd>
+          <dt>Category</dt><dd>{runInfo.category}</dd>
+          <dt>Budget</dt><dd>{runInfo.budget}</dd>
+          <dt>Published within</dt><dd>{runInfo.freshness}</dd>
+          <dt>Portals</dt><dd>{runInfo.portals.join(", ")}</dd>
+          <dt>Sites searched</dt><dd>{runInfo.domains.join(", ")}</dd>
+          <dt>Search engine</dt><dd>{runInfo.engine}</dd>
+          <dt>Scoring</dt><dd>{runInfo.scoring}</dd>
+        </dl>
+      </div>
+      {runInfo.queries && (
+        <details className="pa-queries">
+          <summary>Queries sent <span className="pa-hint num">{runInfo.queries.length}, returning {runInfo.queries.reduce((n, q) => n + (q.pages || 0), 0)} pages before duplicates were removed</span></summary>
+          <div className="pa-tablewrap">
+            <table className="pa-table">
+              <thead><tr><th>Site</th><th>Query</th><th>Pages</th></tr></thead>
+              <tbody>
+                {runInfo.queries.map((q, i) => (
+                  <tr key={i}>
+                    <td>{q.domains.join(", ")}</td>
+                    <td>{q.query}</td>
+                    <td className="num">{q.error ? <span className="pa-urgent">{q.error}</span> : q.pages}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </section>
+  );
+
   // The raw pages the search returned from the selected portals, before any AI filtering.
   const reviewedBlock = reviewed.length > 0 && (
     <details className="pa-card pa-reviewed">
@@ -550,6 +626,12 @@ Portals of interest: ${portalList}`;
           <li key={p.url}>
             {safeUrl(p.url) ? <a href={safeUrl(p.url)} target="_blank" rel="noopener noreferrer">{p.name || p.url}</a> : <span>{p.name || p.url}</span>}
             <div className="pa-sub">{[hostOf(p.url), p.datePublished ? String(p.datePublished).slice(0, 10) : null].filter(Boolean).join("  ·  ")}</div>
+            {p.verdict && (
+              <div className="pa-sub">
+                <span className={`pa-pill ${p.verdict.kind === "other" ? "" : "pa-pill-on"}`}>{p.verdict.kind === "tender" ? "Identified as a tender" : p.verdict.kind === "listing" ? "Tender listing page: open it to see current tenders" : "Not included"}</span>
+                {p.verdict.reason ? ` ${p.verdict.reason}` : ""}
+              </div>
+            )}
           </li>
         ))}
       </ul>
@@ -745,6 +827,7 @@ Portals of interest: ${portalList}`;
                 </p>
                 <button type="button" className="pa-btn primary" onClick={() => setActiveTab("configure")}>{phase === "done" ? "Adjust search" : "Go to search setup"}</button>
               </section>
+              {searchDetailsBlock}
               {reviewedBlock}
               </>
             ) : (
@@ -846,6 +929,7 @@ Portals of interest: ${portalList}`;
                     ? "Listings and match scores are produced by an AI model from public web search. Confirm the title, deadline, budget and reference on the official portal before bidding."
                     : "These pages come only from the selected portals but have not been checked by AI, so some will not be open tenders. Open each listing to check it on the portal."}
                 </p>
+                {searchDetailsBlock}
                 {resultMode === "ai" && reviewedBlock}
               </>
             )}
