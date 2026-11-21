@@ -85,13 +85,23 @@ export default async function handler(req, res) {
   let failed = 0;
   let lastError = null;
 
+  // One entry per query, so the app can show exactly what was searched and what came back.
+  const detail = queries.map((q) => ({ query: q.query, domains: q.domains, pages: 0, error: "not run: ran out of time" }));
+
   const deadline = Date.now() + TIME_BUDGET_MS;
   for (let i = 0; i < queries.length; i += BATCH_SIZE) {
     if (i > 0) await sleep(BATCH_PAUSE_MS);
     if (Date.now() > deadline) { failed += queries.length - i; lastError = new Error("ran out of time"); break; }
     const settled = await Promise.allSettled(queries.slice(i, i + BATCH_SIZE).map((q) => searchWithRetry(q, freshness, deadline)));
-    for (const s of settled) {
-      if (s.status === "rejected") { failed++; lastError = s.reason; continue; }
+    for (const [j, s] of settled.entries()) {
+      const entry = detail[i + j];
+      if (s.status === "rejected") {
+        failed++; lastError = s.reason;
+        entry.error = s.reason?.status === 429 ? "rate limit reached" : String(s.reason?.message || "failed").slice(0, 120);
+        continue;
+      }
+      entry.error = null;
+      entry.pages = s.value.length;
       for (const r of s.value) {
         if (!r?.url || seen.has(r.url) || results.length >= MAX_RESULTS) continue;
         seen.add(r.url);
@@ -111,5 +121,5 @@ export default async function handler(req, res) {
     return fail(res, status, `LangSearch search failed: ${lastError?.message || "unknown error"}`, "search_failed");
   }
   const failureReason = failed ? (lastError?.status === 429 ? "rate limit reached" : String(lastError?.message || "unknown error").slice(0, 120)) : null;
-  return res.status(200).json({ results, queries: queries.length, failed, failureReason });
+  return res.status(200).json({ results, queries: queries.length, failed, failureReason, freshness, detail });
 }
