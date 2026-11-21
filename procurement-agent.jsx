@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 const PROFILE_PLACEHOLDER = "Describe your business profile here";
 
 // Words ignored when deriving search keywords from the business profile.
-const STOP_WORDS = new Set("a an and are as at be by for from has have in is it its of on or our such that the their to we with your you us most all any can will also who which this these those company companies business businesses singapore registered based serve serves selling sell sells provide provides providing offer offers access including various other more".split(" "));
+const STOP_WORDS = new Set("a an and are as at be by for from has have in is it its of on or our such that the their to we with your you us most all any can will also who which this these those company companies business businesses singapore registered based serve serves selling sell sells provide provides providing offer offers access including various other more agency agencies government customers clients sme smes products services supply supplies".split(" "));
 const keywordsFromProfile = text => [...new Set((text.match(/[A-Za-z0-9][A-Za-z0-9-]+/g) || []).filter(w => !STOP_WORDS.has(w.toLowerCase())))].slice(0, 6).join(" ");
 
 const PORTALS = [
@@ -53,7 +53,19 @@ const PORTAL_HOSTS = {
   tenderboard:["tenderboard.biz"], sesami:["sesami.online","sesami.com"],
   sgh:["singhealth.com.sg","alpshealthcare.com.sg","nhg.com.sg"], ntu:["ntu.edu.sg","nus.edu.sg"],
 };
-const TENDER_WORDS = /\b(tender|tenders|quotation|quotations|itq|itt|rfp|rfq|rfi|bid|bids|procurement|sourcing)\b/i;
+// Government agencies and statutory boards publish their tenders on GeBIZ. When one of these portals
+// is selected, GeBIZ's own open-tender listing is searched directly and filtered to that buyer.
+// null means "every agency on GeBIZ".
+const GEBIZ_AGENCY = {
+  gebiz:null,
+  govtech:/government technology agency|govtech/i,
+  sentinel:/ministry of defence|mindef|defence science|armed forces/i,
+  hdb:/housing (and|&) development board/i,
+  jtc:/\bjtc\b|jurong town/i,
+  sla:/singapore land authority/i,
+  caas:/civil aviation authority/i,
+};
+const TENDER_WORDS =/\b(tender|tenders|quotation|quotations|itq|itt|rfp|rfq|rfi|bid|bids|procurement|sourcing)\b/i;
 
 const HIGH_MATCH = 85;
 const CLOSING_SOON_DAYS = 14;
@@ -258,6 +270,21 @@ const portalForUrl = (url, portals = PORTALS) => {
 };
 const isSpecificPage = url => { try { const u = new URL(url); return u.pathname.replace(/\/+$/, "").length > 0 || u.search.length > 1; } catch { return false; } };
 
+// A tender read directly from GeBIZ's listing, scored by keyword overlap when the AI has not scored it.
+function tenderToRow(page, terms) {
+  const t = page.tender;
+  const words = [...new Set(terms.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1))];
+  const hay = `${t.title} ${t.category}`.toLowerCase();
+  const hits = words.filter(w => hay.includes(w.replace(/s$/, ""))).length;
+  return {
+    title:t.title, agency:t.agency, portal:"GeBIZ", deadline:t.deadline, budget:null, category:t.category,
+    relevance:words.length ? Math.round(100 * hits / words.length) : 0,
+    description:`${t.type || "Opportunity"} published on GeBIZ${t.published ? ` on ${t.published}` : ""}. Closes ${t.deadline || "on a date not stated"} ${t.closingTime}.`.trim(),
+    tags:[], refNo:t.refNo, sourceUrl:t.url, aiReason:`Title matches your keyword "${t.keyword}"; not scored by AI`,
+    nextStep:"Log in to GeBIZ and submit before the closing time.", isReal:true,
+  };
+}
+
 function pageToRow(page, terms) {
   const host = hostOf(page.url);
   const portal = portalForUrl(page.url);
@@ -443,7 +470,16 @@ Business Profile: ${businessDesc}
 Keywords: ${searchTerms}
 Category: ${category || "all"}
 Budget preference: ${budget || "any"}
-Portals of interest: ${portalList}`;
+Portals of interest: ${portalList}
+
+Results whose text begins with "GeBIZ open tender listing" were read directly from GeBIZ's own list of open opportunities. They are confirmed real, open and specific, so always return them with "isTender": true. For these, only judge how relevant the purchase is to the business and give an honest relevance score (low when the fit is weak), and set nextStep to logging in to GeBIZ and submitting before the closing time.`;
+
+    // Tenders read straight from GeBIZ, and which selected portal each one belongs to.
+    const urlPortal = new Map();
+    const resolvePortal = u => urlPortal.get(u) || portalForUrl(u, selPortals);
+    const gebizPortals = selPortals.filter(p => p.id in GEBIZ_AGENCY);
+    let gebizPages = [];
+    let gebizDetail = [];
 
     let generated = [];
     let mode = "ai";
@@ -452,6 +488,34 @@ Portals of interest: ${portalList}`;
     let engine = "LangSearch web search";
     try {
       setPhase("searching");
+
+      // Step 1: search GeBIZ's own open-tender listing, which web search engines cannot see into.
+      if (gebizPortals.length > 0) {
+        const raw = /[,;\n]/.test(keywords) ? keywords.split(/[,;\n]+/) : searchTerms.split(/\s+/).map(w => w.replace(/(?<=[A-Za-z]{3}[^sSuUeE])s$/, ""));
+        const terms = [...new Set(raw.map(s => s.trim()).filter(s => s.length >= 2))].slice(0, 5);
+        try {
+          addLog(`Searching GeBIZ's open tender listing directly for: ${terms.join(", ")}`);
+          const g = await callApi("/api/gebiz", { keywords:terms });
+          const everyAgency = gebizPortals.some(p => p.id === "gebiz");
+          for (const t of g.results || []) {
+            const portal = everyAgency ? gebizPortals.find(p => p.id === "gebiz") : gebizPortals.find(p => GEBIZ_AGENCY[p.id].test(t.agency));
+            if (!portal) continue;
+            urlPortal.set(t.url, portal);
+            gebizPages.push({
+              name:t.title, url:t.url, displayUrl:"gebiz.gov.sg", datePublished:t.published, tender:t,
+              text:`GeBIZ open tender listing. Type: ${t.type || "not stated"}. Reference: ${t.refNo}. Agency: ${t.agency}. Category: ${t.category}. Published: ${t.published || "not stated"}. Closing on: ${t.deadline || "not stated"} ${t.closingTime}. Matched keyword: ${t.keyword}. Respond by electronic submission on GeBIZ.`,
+            });
+          }
+          gebizDetail = (g.detail || []).map(d => ({ domains:["gebiz.gov.sg (its own open-tender search)"], query:d.keyword, pages:d.read, error:d.error, note:d.error ? "" : `${d.open} open, ${d.closed ?? "?"} closed on GeBIZ` }));
+          for (const d of g.detail || []) addLog(d.error ? `GeBIZ "${d.keyword}": ${d.error}` : `GeBIZ "${d.keyword}": ${d.open} open ${d.open === 1 ? "tender" : "tenders"} (${d.closed ?? "?"} closed)${d.open > d.read ? `, first ${d.read} read` : ""}`, d.error ? "warn" : "info");
+          addLog(`${gebizPages.length} open GeBIZ ${gebizPages.length === 1 ? "tender" : "tenders"} from the selected portals`, gebizPages.length ? "ok" : "info");
+        } catch(e) {
+          addLog(`GeBIZ direct search failed: ${e.message}`, "warn");
+          gebizDetail = [{ domains:["gebiz.gov.sg (its own open-tender search)"], query:terms.join(", "), pages:0, error:e.message }];
+        }
+      }
+
+      // Step 2: web search of the selected portals' sites.
       try {
         addLog(`Searching the ${selPortals.length} selected ${selPortals.length === 1 ? "portal" : "portals"} with LangSearch (${queries.length} queries)`);
         const s = await callApi("/api/search", { queries, freshness });
@@ -459,10 +523,17 @@ Portals of interest: ${portalList}`;
         queryDetail = s.detail || null;
         addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found on the selected portals${s.failed ? `; ${s.failed} of ${s.queries} queries failed after retries (${s.failureReason || "unknown error"})` : ""}`, s.failed ? "warn" : "info");
       } catch(e) {
-        if (e.code !== "search_not_configured") throw e;
-        addLog("LangSearch is not set up on the server; using Claude web search instead", "warn");
-        engine = "Claude web search";
+        if (e.code === "search_not_configured") {
+          addLog(gebizPages.length ? "LangSearch is not set up on the server; continuing with the GeBIZ results" : "LangSearch is not set up on the server; using Claude web search instead", "warn");
+          if (!gebizPages.length) engine = "Claude web search";
+        } else if (gebizPages.length) {
+          addLog(`Web search failed (${e.message}); continuing with the GeBIZ results`, "warn");
+          pages = [];
+        } else throw e;
       }
+      if (gebizPages.length) { pages = [...gebizPages, ...(pages || [])]; engine = "GeBIZ direct search + LangSearch web search"; }
+      queryDetail = [...gebizDetail, ...(queryDetail || [])];
+      if (queryDetail.length === 0) queryDetail = null;
 
       if (pages === null) {
         // Fallback: let Claude run its own web searches.
@@ -484,7 +555,7 @@ Portals of interest: ${portalList}`;
           const data = await callApi("/api/messages", {
             max_tokens:16000,
             system:extractPrompt,
-            messages:[{role:"user",content:`${brief}\n\nSearch results (JSON):\n${JSON.stringify(pages)}`}]
+            messages:[{role:"user",content:`${brief}\n\nSearch results (JSON):\n${JSON.stringify(pages.map(({ tender, ...p }) => p))}`}]
           });
           const known = new Set(pages.map(p => p.url));
           const candidates = parseTenders(textOf(data), m => addLog(m, "warn"));
@@ -497,14 +568,30 @@ Portals of interest: ${portalList}`;
           const listings = pages.filter(p => p.verdict?.kind === "listing").length;
           addLog(`The AI model read ${pages.length} ${pages.length === 1 ? "page" : "pages"}: ${tenders.length} candidate ${tenders.length === 1 ? "tender" : "tenders"}, ${listings} tender listing ${listings === 1 ? "page" : "pages"}, ${Math.max(0, pages.length - tenders.length - listings)} not relevant`);
           generated = tenders.map(o => ({ ...o, sourceUrl:known.has(o.sourceUrl) ? o.sourceUrl : null }));
+          // GeBIZ tenders keep the facts read from GeBIZ itself; the AI only supplies relevance and wording.
+          const scoredUrls = new Set(generated.map(o => o.sourceUrl));
+          generated = generated.map(o => {
+            const t = pages.find(p => p.url === o.sourceUrl)?.tender;
+            return t ? { ...o, title:t.title, agency:t.agency, refNo:t.refNo, deadline:t.deadline, category:o.category || t.category, nextStep:o.nextStep || "Log in to GeBIZ and submit before the closing time." } : o;
+          });
+          // Any GeBIZ tender the AI skipped is still shown, scored by keyword overlap instead.
+          const skipped = pages.filter(p => p.tender && !scoredUrls.has(p.url));
+          if (skipped.length) {
+            addLog(`${skipped.length} GeBIZ ${skipped.length === 1 ? "tender was" : "tenders were"} not scored by the AI and ${skipped.length === 1 ? "is" : "are"} shown with a keyword score`, "warn");
+            generated = [...generated, ...skipped.map(p => tenderToRow(p, searchTerms))];
+            pages = pages.map(p => p.tender && !scoredUrls.has(p.url) ? { ...p, verdict:{ kind:"tender", reason:"Shown with a keyword score" } } : p);
+          }
         } catch(e) {
           if (e.code !== "ai_not_configured") throw e;
           mode = "keyword";
           addLog("AI scoring is not set up on the server; showing portal pages that mention tenders, ranked by keyword overlap", "warn");
-          generated = pages
-            .filter(p => isSpecificPage(p.url) && TENDER_WORDS.test(`${p.name} ${p.text}`))
-            .map(p => pageToRow(p, searchTerms))
-            .filter(r => r.relevance > 0);
+          generated = [
+            ...pages.filter(p => p.tender).map(p => tenderToRow(p, searchTerms)),
+            ...pages
+              .filter(p => !p.tender && isSpecificPage(p.url) && TENDER_WORDS.test(`${p.name} ${p.text}`))
+              .map(p => pageToRow(p, searchTerms))
+              .filter(r => r.relevance > 0),
+          ];
         }
       }
     } catch(e) {
@@ -514,13 +601,13 @@ Portals of interest: ${portalList}`;
 
     // Keep only tenders that link to a page on a selected portal and have not already closed.
     const valid = generated.filter(o => o && o.isReal !== false && o.title);
-    const linked = valid.filter(o => portalForUrl(o.sourceUrl, selPortals));
+    const linked = valid.filter(o => resolvePortal(o.sourceUrl));
     const stillOpen = linked.filter(o => !(daysLeft(o.deadline) < 0));
     if (mode === "ai" && valid.length > stillOpen.length) {
       addLog(`${valid.length - stillOpen.length} removed: ${valid.length - linked.length} without a link to a page on a selected portal, ${linked.length - stillOpen.length} already closed`, "warn");
     }
     const scored = stillOpen
-      .map((o, i) => ({ ...o, _key:i, portal:portalForUrl(o.sourceUrl, selPortals).name, relevance:Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))), tags:Array.isArray(o.tags) ? o.tags : [] }))
+      .map((o, i) => ({ ...o, _key:i, portal:resolvePortal(o.sourceUrl).name, relevance:Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))), tags:Array.isArray(o.tags) ? o.tags : [] }))
       .sort((a,b) => b.relevance - a.relevance);
 
     if (scored.length === 0) {
@@ -606,7 +693,7 @@ Portals of interest: ${portalList}`;
                   <tr key={i}>
                     <td>{q.domains.join(", ")}</td>
                     <td>{q.query}</td>
-                    <td className="num">{q.error ? <span className="pa-urgent">{q.error}</span> : q.pages}</td>
+                    <td className="num">{q.error ? <span className="pa-urgent">{q.error}</span> : q.pages}{q.note ? <span className="pa-sub"> ({q.note})</span> : null}</td>
                   </tr>
                 ))}
               </tbody>
