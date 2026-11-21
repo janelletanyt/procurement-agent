@@ -1,9 +1,9 @@
 // Vercel serverless function: forwards requests to the Anthropic Messages API.
 // The API key stays on the server, and callers must send the shared access code.
 //
-// Required environment variables (set in Vercel → Project → Settings → Environment Variables):
-//   ANTHROPIC_API_KEY  – your Anthropic API key
-//   ACCESS_CODE        – the code visitors must enter before the agent will run
+// Environment variables (set in Vercel → Project → Settings → Environment Variables):
+//   ACCESS_CODE        – required: the code visitors must enter before the agent will run
+//   ANTHROPIC_API_KEY  – your Anthropic API key; without it the app runs in search-only mode
 // Optional:
 //   ANTHROPIC_MODEL    – defaults to claude-sonnet-5-5
 
@@ -15,14 +15,13 @@ const MAX_CONTINUATIONS = 4;
 
 const sha = (s) => createHash("sha256").update(String(s ?? "")).digest();
 const codeMatches = (given) => timingSafeEqual(sha(given), sha(process.env.ACCESS_CODE));
-const fail = (res, status, message) => res.status(status).json({ error: { message } });
+const fail = (res, status, message, code) => res.status(status).json({ error: { message, code } });
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return fail(res, 405, "Method not allowed");
-  if (!process.env.ANTHROPIC_API_KEY || !process.env.ACCESS_CODE) {
-    return fail(res, 500, "Server is not configured: set ANTHROPIC_API_KEY and ACCESS_CODE in Vercel.");
-  }
-  if (!codeMatches(req.headers["x-access-code"])) return fail(res, 401, "Wrong or missing access code.");
+  if (!process.env.ACCESS_CODE) return fail(res, 500, "Server is not configured: set ACCESS_CODE in Vercel.", "not_configured");
+  if (!codeMatches(req.headers["x-access-code"])) return fail(res, 401, "Wrong or missing access code.", "bad_access_code");
+  if (!process.env.ANTHROPIC_API_KEY) return fail(res, 501, "AI scoring and drafting are not configured: set ANTHROPIC_API_KEY in Vercel.", "ai_not_configured");
 
   const { system, messages, max_tokens, web_search } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) return fail(res, 400, "messages is required");
