@@ -40,13 +40,15 @@ const FRESHNESS = [
   { id:"noLimit",  label:"Any time" },
 ];
 
-// Used to label raw search results by portal when AI scoring is unavailable.
+// The web domains each portal publishes on. Searches are restricted to the selected portals'
+// domains, and any result from another site is discarded.
 const PORTAL_HOSTS = {
   gebiz:["gebiz.gov.sg"], govtech:["tech.gov.sg"], sentinel:["mindef.gov.sg"], hdb:["hdb.gov.sg"],
   jtc:["jtc.gov.sg"], sla:["sla.gov.sg"], caas:["caas.gov.sg","changiairport.com"], ariba_sg:["ariba.com"],
-  tenderboard:["tenderboard.biz","tenderboard.gov.sg"], sesami:["sesami.co","sesami.online"],
-  sgh:["singhealth.com.sg","nhg.com.sg"], ntu:["ntu.edu.sg","nus.edu.sg"],
+  tenderboard:["tenderboard.biz"], sesami:["sesami.online","sesami.com"],
+  sgh:["singhealth.com.sg","alpshealthcare.com.sg","nhg.com.sg"], ntu:["ntu.edu.sg","nus.edu.sg"],
 };
+const TENDER_WORDS = /\b(tender|tenders|quotation|quotations|itq|itt|rfp|rfq|rfi|bid|bids|procurement|sourcing)\b/i;
 
 const HIGH_MATCH = 85;
 const CLOSING_SOON_DAYS = 14;
@@ -232,9 +234,15 @@ function parseTenders(raw, onWarn) {
 }
 
 // Search-only mode: turns a raw search result into a table row, scored by keyword overlap.
+const portalForUrl = (url, portals = PORTALS) => {
+  const host = hostOf(url);
+  return portals.find(p => (PORTAL_HOSTS[p.id] || []).some(h => host === h || host.endsWith(`.${h}`))) || null;
+};
+const isSpecificPage = url => { try { const u = new URL(url); return u.pathname.replace(/\/+$/, "").length > 0 || u.search.length > 1; } catch { return false; } };
+
 function pageToRow(page, terms) {
   const host = hostOf(page.url);
-  const portal = PORTALS.find(p => (PORTAL_HOSTS[p.id] || []).some(h => host === h || host.endsWith(`.${h}`)));
+  const portal = portalForUrl(page.url);
   const words = [...new Set(terms.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1))];
   const hay = `${page.name || ""} ${page.text || ""}`.toLowerCase();
   const hits = words.filter(w => hay.includes(w)).length;
@@ -246,7 +254,7 @@ function pageToRow(page, terms) {
 }
 
 function downloadCsv(rows) {
-  const cols = ["title","agency","portal","refNo","category","budget","deadline","relevance","aiReason","sourceUrl"];
+  const cols = ["title","agency","portal","refNo","category","budget","deadline","relevance","aiReason","nextStep","sourceUrl"];
   const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const csv = [cols.join(","), ...rows.map(r => cols.map(c => cell(r[c])).join(","))].join("\r\n");
   const url = URL.createObjectURL(new Blob(["﻿" + csv], { type:"text/csv;charset=utf-8" }));
@@ -363,16 +371,22 @@ Search for real open tenders in Singapore (${new Date().getFullYear()}) matching
 Then return all real tenders found as a JSON array.`;
 
     const year = new Date().getFullYear();
+    // Two searches per selected portal, each restricted to that portal's own domains.
+    const allowedDomains = selPortals.flatMap(p => PORTAL_HOSTS[p.id] || []);
     const queries = [
-      `${searchTerms} tender Singapore ${year}`,
-      `${searchTerms} invitation to quote Singapore`,
-      ...(category ? [`${category} ${searchTerms} tender Singapore`] : []),
-      ...selPortals.map(p => `${p.name} ${searchTerms} tender Singapore`),
-    ].slice(0, 16);
+      ...selPortals.map(p => ({ query:`${searchTerms} ${category} tender quotation`.replace(/\s+/g, " "), domains:PORTAL_HOSTS[p.id] || [] })),
+      ...selPortals.map(p => ({ query:`open invitation to tender quotation ${year}`, domains:PORTAL_HOSTS[p.id] || [] })),
+    ].filter(q => q.domains.length > 0);
 
-    const extractPrompt = `You are a Singapore procurement sourcing analyst. You are given web search results as JSON (name, url, datePublished, text). Identify REAL procurement tenders, quotations or bid invitations in Singapore that appear to be currently open and that match the business profile.
+    const extractPrompt = `You are a Singapore procurement sourcing analyst. You are given web search results as JSON (name, url, datePublished, text). Identify REAL procurement tenders, quotations or bid invitations from Singapore buyers that are currently open and that match the business profile.
 
-Use only information present in the search results. Do not invent tenders, deadlines, budgets or reference numbers: use null (or an empty string for refNo) when a detail is not in the text. Skip news articles, guides, awarded or closed notices, and generic portal home pages.
+Include a tender only if ALL of these hold:
+- The page is about one specific procurement opportunity (or clearly lists it by name), not a portal home page, listing index without detail, supplier guide, FAQ, registration page, news article or policy page.
+- It is not awarded, closed or cancelled, and any closing date in the text is on or after today's date.
+- The text gives enough to act on: a specific title plus at least one of a reference number, a closing date, or instructions on how to respond.
+- What is being bought is relevant to the business profile. Do not include a tender only because it shares a keyword.
+
+Use only information present in the search results. Do not invent tenders, deadlines, budgets or reference numbers: use null (or an empty string for refNo) when a detail is not in the text. It is correct to return few or no tenders when the results do not contain real ones.
 
 Return ONLY a raw JSON array. Each object:
 {
@@ -389,6 +403,7 @@ Return ONLY a raw JSON array. Each object:
   "refNo": "reference number if found or empty string",
   "sourceUrl": "the url of the search result this tender came from, copied exactly",
   "aiReason": "why this matches the business, max 12 words",
+  "nextStep": "what the supplier should do next to respond, taken from the page, max 20 words",
   "isReal": true
 }
 
@@ -407,10 +422,10 @@ Portals of interest: ${portalList}`;
       setPhase("searching");
       let pages = null;
       try {
-        addLog(`Searching the web with LangSearch (${queries.length} queries)`);
+        addLog(`Searching the ${selPortals.length} selected ${selPortals.length === 1 ? "portal" : "portals"} with LangSearch (${queries.length} queries)`);
         const s = await callApi("/api/search", { queries, freshness });
-        pages = s.results || [];
-        addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found${s.failed ? `; ${s.failed} of ${s.queries} queries failed` : ""}`);
+        pages = (s.results || []).filter(p => portalForUrl(p.url, selPortals));
+        addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found on the selected portals${s.failed ? `; ${s.failed} of ${s.queries} queries failed` : ""}`);
       } catch(e) {
         if (e.code !== "search_not_configured") throw e;
         addLog("LangSearch is not set up on the server; using Claude web search instead", "warn");
@@ -423,7 +438,8 @@ Portals of interest: ${portalList}`;
           max_tokens:16000,
           system:systemPrompt,
           web_search:true,
-          messages:[{role:"user",content:userMsg}]
+          domains:allowedDomains,
+          messages:[{role:"user",content:`${userMsg}\n\nOnly include tenders published on these domains: ${allowedDomains.join(", ")}.`}]
         });
         const searches = (data.content || []).filter(c => c.type === "server_tool_use" && c.name === "web_search").length;
         addLog(`Response received: ${searches} web ${searches === 1 ? "search" : "searches"} run`);
@@ -442,8 +458,11 @@ Portals of interest: ${portalList}`;
         } catch(e) {
           if (e.code !== "ai_not_configured") throw e;
           mode = "keyword";
-          addLog("AI scoring is not set up on the server; showing search results ranked by keyword overlap", "warn");
-          generated = pages.map(p => pageToRow(p, searchTerms));
+          addLog("AI scoring is not set up on the server; showing portal pages that mention tenders, ranked by keyword overlap", "warn");
+          generated = pages
+            .filter(p => isSpecificPage(p.url) && TENDER_WORDS.test(`${p.name} ${p.text}`))
+            .map(p => pageToRow(p, searchTerms))
+            .filter(r => r.relevance > 0);
         }
       }
     } catch(e) {
@@ -453,11 +472,13 @@ Portals of interest: ${portalList}`;
 
     const scored = generated
       .filter(o => o && o.isReal !== false && o.title)
-      .map((o, i) => ({ ...o, _key:i, relevance:Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))), tags:Array.isArray(o.tags) ? o.tags : [] }))
+      // Keep only tenders that link to a page on a selected portal and have not already closed.
+      .filter(o => portalForUrl(o.sourceUrl, selPortals) && !(daysLeft(o.deadline) < 0))
+      .map((o, i) => ({ ...o, _key:i, portal:portalForUrl(o.sourceUrl, selPortals).name, relevance:Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))), tags:Array.isArray(o.tags) ? o.tags : [] }))
       .sort((a,b) => b.relevance - a.relevance);
 
     if (scored.length === 0) {
-      addLog("No matching public listings were found", "warn");
+      addLog("No open, relevant tenders were found on the selected portals", "warn");
     } else {
       const high = scored.filter(o => o.relevance >= HIGH_MATCH).length;
       addLog(`${scored.length} ${scored.length === 1 ? "opportunity" : "opportunities"} found, ${high} high match`, "ok");
@@ -684,7 +705,7 @@ Portals of interest: ${portalList}`;
                 <b>{phase === "done" ? "No matching tenders found" : "No results yet"}</b>
                 <p>
                   {phase === "done"
-                    ? "The search found no public listings that match. Many portals show full tender details only to signed-in suppliers. Try broader keywords or a different category."
+                    ? "The search found no open, relevant tenders on the selected portals. Many portals show tender details only to signed-in suppliers, so they cannot be found by web search. Try broader keywords, a longer \"Published within\" period, or more portals."
                     : "Set up a search and run it to see matching opportunities here."}
                 </p>
                 <button type="button" className="pa-btn primary" onClick={() => setActiveTab("configure")}>{phase === "done" ? "Adjust search" : "Go to search setup"}</button>
@@ -692,7 +713,7 @@ Portals of interest: ${portalList}`;
             ) : (
               <>
                 {resultMode === "keyword" && (
-                  <div className="pa-banner pa-info" role="status"><b>Search-only mode.</b> AI scoring is not set up on the server, so these are raw web search results ranked by how many of your keywords they contain. Deadlines, budgets and drafts are unavailable.</div>
+                  <div className="pa-banner pa-info" role="status"><b>Search-only mode.</b> AI scoring is not set up on the server, so these are pages from the selected portals that mention tenders, ranked by how many of your keywords they contain. They have not been checked to be open, relevant tenders. Add an Anthropic API key on the server to turn on AI scoring, deadlines, budgets and drafts.</div>
                 )}
                 <section className="pa-card pa-stats">
                   <div className="pa-stat"><span>Opportunities</span><b className="num">{results.length}</b></div>
@@ -757,6 +778,7 @@ Portals of interest: ${portalList}`;
                                     <div>
                                       <p>{opp.description || "No description available."}</p>
                                       {opp.aiReason && <p className="pa-sub" style={{marginTop:10}}>Why it matches: {opp.aiReason}</p>}
+                                      {opp.nextStep && <p style={{marginTop:10}}><b style={{fontWeight:600}}>Next step:</b> {opp.nextStep}</p>}
                                       {opp.tags.length > 0 && <div className="pa-tags">{opp.tags.map(t => <span key={t} className="pa-pill">{t}</span>)}</div>}
                                     </div>
                                     <div>
@@ -785,7 +807,7 @@ Portals of interest: ${portalList}`;
                 <p className="pa-note">
                   {resultMode === "ai"
                     ? "Listings and match scores are produced by an AI model from public web search. Confirm the title, deadline, budget and reference on the official portal before bidding."
-                    : "These are unfiltered web search results, so some will not be tenders. Open each listing to check it on the source site."}
+                    : "These pages come only from the selected portals but have not been checked by AI, so some will not be open tenders. Open each listing to check it on the portal."}
                 </p>
               </>
             )}
