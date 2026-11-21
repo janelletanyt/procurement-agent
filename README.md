@@ -78,7 +78,7 @@ The repo is a small Vite + React app with two serverless functions, ready to dep
 
 On Gemini's free tier, Google states that content sent to the API is used to improve its products, so do not put confidential business details in the profile when using a free key.
 
-Environment variables only apply to new deployments, so redeploy after adding or changing one.
+Environment variables only apply to new deployments, so redeploy after adding or changing one. Anyone with the site already open should then reload the page.
 
 LangSearch's free plan has rate and daily usage limits. Claude usage is billed to the Anthropic key's account, so share the access code only with people you trust.
 
