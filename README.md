@@ -38,16 +38,16 @@ Business profile + keywords + portals
    Results table  ──►  Claude  ──►  Expression of Interest draft
 ```
 
-- **Searching** – `api/search.js` sends up to 16 queries (general ones plus one per selected portal) to the LangSearch Web Search API, filtered by the "Published within" setting, and merges the pages it returns.
-- **Extracting and scoring** – Claude reads those pages (through `api/messages.js`), keeps the ones that are real, open tenders, and gives each a relevance score and a short justification. If the response is cut off, complete records are salvaged from the partial output.
-- **Real results only** – Claude is told to use only what is in the search results and not to fabricate tenders. A source link is shown only if it is one of the pages LangSearch actually returned.
+- **Searching, on the selected portals only** – `api/search.js` sends two queries per selected portal to the LangSearch Web Search API, each restricted to that portal's own web domains and filtered by the "Published within" setting. Pages from any other site are discarded.
+- **Extracting and scoring** – Claude reads those pages (through `api/messages.js`) and keeps only specific, open tenders from Singapore buyers that are relevant to the business and have enough detail to act on. Each gets a relevance score, a short justification and a suggested next step. If the response is cut off, complete records are salvaged from the partial output.
+- **Real results only** – Claude is told to use only what is in the search results and not to fabricate tenders. A tender is shown only if it links to a page LangSearch actually returned from a selected portal, and tenders whose closing date has passed are dropped.
 
 The app adapts to which keys are set on the server:
 
 | Keys set | Behaviour |
 |---|---|
 | `LANGSEARCH_API_KEY` + `ANTHROPIC_API_KEY` | LangSearch searches, Claude extracts, scores and drafts (recommended) |
-| `LANGSEARCH_API_KEY` only | Search-only mode: raw LangSearch results ranked by keyword overlap, no AI scoring or drafts. Free to run |
+| `LANGSEARCH_API_KEY` only | Search-only mode: pages from the selected portals that mention tenders, ranked by keyword overlap. Nothing checks that they are open, relevant tenders, and there are no drafts. Free to run |
 | `ANTHROPIC_API_KEY` only | Claude runs its own web searches with its `web_search` tool |
 
 - **Drafting** – A second Claude call writes the Expression of Interest in a formal Singapore business tone.
