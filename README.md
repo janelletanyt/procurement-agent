@@ -72,6 +72,8 @@ The repo is a small Vite + React app with two serverless functions, ready to dep
    - `ANTHROPIC_API_KEY` – an Anthropic API key from [platform.claude.com](https://platform.claude.com)
 3. Deploy. Optionally set `ANTHROPIC_MODEL` to change the Claude model (default `claude-sonnet-5-5`).
 
+Environment variables only apply to new deployments, so redeploy after adding or changing one.
+
 LangSearch's free plan has rate and daily usage limits. Claude usage is billed to the Anthropic key's account, so share the access code only with people you trust.
 
 ### Run locally
