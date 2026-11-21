@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 
-const BUSINESS_PROFILE = "We are a Singapore registered ecommerce company selling IT peripherals such as VR headsets, AI-ready workstations, and in-demand tech gadgets. We serve SMEs and government agencies, with access to most procurement portals in Singapore.";
+// The business profile starts empty; this text is shown as the placeholder.
+const PROFILE_PLACEHOLDER = "Describe your business profile here";
+
+// Words ignored when deriving search keywords from the business profile.
+const STOP_WORDS = new Set("a an and are as at be by for from has have in is it its of on or our such that the their to we with your you us most all any can will also who which this these those company companies business businesses singapore registered based serve serves selling sell sells provide provides providing offer offers access including various other more".split(" "));
+const keywordsFromProfile = text => [...new Set((text.match(/[A-Za-z0-9][A-Za-z0-9-]+/g) || []).filter(w => !STOP_WORDS.has(w.toLowerCase())))].slice(0, 6).join(" ");
 
 const PORTALS = [
   { id:"gebiz",       name:"GeBIZ",                 type:"Government",      desc:"Central government tenders" },
@@ -265,7 +270,7 @@ function downloadCsv(rows) {
 }
 
 export default function GeekAI() {
-  const [businessDesc, setBusinessDesc] = useState(BUSINESS_PROFILE);
+  const [businessDesc, setBusinessDesc] = useState("");
   const [keywords, setKeywords] = useState("");
   const [selectedPortals, setSelectedPortals] = useState(PORTALS.map(p => p.id));
   const [budget, setBudget] = useState("");
@@ -319,7 +324,7 @@ export default function GeekAI() {
 
     const searchTerms = keywords
       ? keywords
-      : businessDesc.match(/\b(VR|AI|workstation|peripheral|gadget|tech|IT|hardware|software|headset|laptop|monitor|IoT|device)\b/gi)?.slice(0,4).join(" ") || "IT hardware";
+      : keywordsFromProfile(businessDesc) || businessDesc.trim().slice(0, 60);
 
     addLog("Search started", "strong");
     addLog(`Keywords: ${keywords || `${searchTerms} (derived from the business profile)`}`);
@@ -494,7 +499,7 @@ Portals of interest: ${portalList}`;
     try {
       const data = await callApi("/api/messages", {
         max_tokens:4000,
-        system:"You are a professional bid writer for a Singapore-based ecommerce company. Write formal expressions of interest following Singapore government/corporate procurement norms.",
+        system:"You are a professional bid writer for a Singapore-based company. Write formal expressions of interest following Singapore government/corporate procurement norms.",
         messages:[{role:"user", content:`Write a concise Expression of Interest for this Singapore procurement opportunity.\n\nOur Business: ${businessDesc}\nOpportunity: ${opp.title}\nAgency: ${opp.agency}\nBudget: ${Number(opp.budget) > 0 ? `SGD ${Number(opp.budget).toLocaleString()}` : "not stated"}\nRef: ${opp.refNo}\nDescription: ${opp.description}\n\n3 paragraphs: 1) Company intro & fit, 2) Capabilities & SG track record, 3) Professional closing. Under 260 words. Formal Singapore business tone.`}]
       });
       setDraft(textOf(data).trim() || "No draft was returned. Please try again.");
@@ -576,7 +581,7 @@ Portals of interest: ${portalList}`;
               <div className="pa-card-h"><h2>Business profile</h2></div>
               <div className="pa-card-b">
                 <label className="pa-lab" htmlFor="pa-profile">Used to find and score matching tenders, and to write drafts</label>
-                <textarea id="pa-profile" className="pa-in" rows={4} value={businessDesc} onChange={e => setBusinessDesc(e.target.value)} placeholder="Describe your business, products, and target customers" />
+                <textarea id="pa-profile" className="pa-in" rows={4} value={businessDesc} onChange={e => setBusinessDesc(e.target.value)} placeholder={PROFILE_PLACEHOLDER} />
               </div>
             </section>
 
@@ -640,7 +645,7 @@ Portals of interest: ${portalList}`;
             <div className="pa-toolbar" style={{marginTop:24}}>
               <button type="button" className="pa-btn primary" onClick={runAgent} disabled={!canRun}>{running ? "Searching…" : "Run search"}</button>
               <span className="pa-hint">
-                {!accessCode.trim() ? "Enter the access code to run a search." : selectedPortals.length === 0 ? "Select at least one portal." : "Searches the web with LangSearch, then scores each tender against the profile."}
+                {!businessDesc.trim() ? "Describe your business profile to run a search." : !accessCode.trim() ? "Enter the access code to run a search." : selectedPortals.length === 0 ? "Select at least one portal." : "Searches the web with LangSearch, then scores each tender against the profile."}
               </span>
             </div>
           </div>
