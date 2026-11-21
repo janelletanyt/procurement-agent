@@ -28,9 +28,25 @@ const TABS = [
 
 const STEPS = [
   { id:"preparing", label:"Prepare" },
-  { id:"searching", label:"Search and score" },
+  { id:"searching", label:"Search" },
+  { id:"scoring",   label:"Score" },
   { id:"done",      label:"Complete" },
 ];
+
+const FRESHNESS = [
+  { id:"oneWeek",  label:"Past week" },
+  { id:"oneMonth", label:"Past month" },
+  { id:"oneYear",  label:"Past year" },
+  { id:"noLimit",  label:"Any time" },
+];
+
+// Used to label raw search results by portal when AI scoring is unavailable.
+const PORTAL_HOSTS = {
+  gebiz:["gebiz.gov.sg"], govtech:["tech.gov.sg"], sentinel:["mindef.gov.sg"], hdb:["hdb.gov.sg"],
+  jtc:["jtc.gov.sg"], sla:["sla.gov.sg"], caas:["caas.gov.sg","changiairport.com"], ariba_sg:["ariba.com"],
+  tenderboard:["tenderboard.biz","tenderboard.gov.sg"], sesami:["sesami.co","sesami.online"],
+  sgh:["singhealth.com.sg","nhg.com.sg"], ntu:["ntu.edu.sg","nus.edu.sg"],
+};
 
 const HIGH_MATCH = 85;
 const CLOSING_SOON_DAYS = 14;
@@ -93,7 +109,7 @@ const CSS = `
 .pa-in::placeholder{color:var(--subtle)}
 .pa-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
 textarea.pa-in{resize:vertical;line-height:1.65;display:block}
-.pa-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pa-grid3{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
 .pa-hint{font-size:12.5px;color:var(--muted)}
 
 .pa-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;color:var(--text);white-space:nowrap;transition:border-color .15s,opacity .15s}
@@ -129,6 +145,7 @@ textarea.pa-in{resize:vertical;line-height:1.65;display:block}
 
 .pa-banner{border:1px solid var(--border);border-left:3px solid var(--bad);background:var(--surface);border-radius:6px;padding:12px 16px;margin-bottom:16px}
 .pa-banner b{font-weight:600}
+.pa-banner.pa-info{border-left-color:var(--accent)}
 
 .pa-stats{display:grid;grid-template-columns:repeat(4,1fr)}
 .pa-stat{padding:18px 20px;border-left:1px solid var(--border)}
@@ -192,6 +209,42 @@ const fmtMoney = n => (Number(n) > 0 ? `S$${Number(n).toLocaleString("en-SG")}` 
 const daysLeft = d => { const t = Date.parse(d); return Number.isNaN(t) ? null : Math.ceil((t - Date.now()) / 86400000); };
 const safeUrl = u => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);
 
+const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+const textOf = data => (data.content || []).filter(c => c.type === "text").map(c => c.text || "").join("");
+
+// Reads the model's reply as a JSON array of tenders, recovering complete records if it was cut off.
+function parseTenders(raw, onWarn) {
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const start = cleaned.indexOf("[");
+  const jsonStr = start >= 0 ? cleaned.slice(start) : "";
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    onWarn("Response was incomplete; recovering the complete records");
+    const salvaged = [];
+    for (const m of jsonStr.matchAll(/\{[^{}]*"title"\s*:[^{}]*\}/gs)) {
+      try { salvaged.push(JSON.parse(m[0])); } catch {}
+    }
+    if (salvaged.length === 0) throw new Error("The response could not be read as a list of tenders");
+    return salvaged;
+  }
+}
+
+// Search-only mode: turns a raw search result into a table row, scored by keyword overlap.
+function pageToRow(page, terms) {
+  const host = hostOf(page.url);
+  const portal = PORTALS.find(p => (PORTAL_HOSTS[p.id] || []).some(h => host === h || host.endsWith(`.${h}`)));
+  const words = [...new Set(terms.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1))];
+  const hay = `${page.name || ""} ${page.text || ""}`.toLowerCase();
+  const hits = words.filter(w => hay.includes(w)).length;
+  return {
+    title:page.name || page.url, agency:host, portal:portal ? portal.name : "Web", deadline:null, budget:null,
+    category:"", relevance:words.length ? Math.round(100 * hits / words.length) : 0,
+    description:(page.text || "").slice(0, 600), tags:[], refNo:"", sourceUrl:page.url, aiReason:"", isReal:true,
+  };
+}
+
 function downloadCsv(rows) {
   const cols = ["title","agency","portal","refNo","category","budget","deadline","relevance","aiReason","sourceUrl"];
   const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -209,6 +262,8 @@ export default function GeekAI() {
   const [selectedPortals, setSelectedPortals] = useState(PORTALS.map(p => p.id));
   const [budget, setBudget] = useState("");
   const [category, setCategory] = useState("");
+  const [freshness, setFreshness] = useState("oneMonth");
+  const [resultMode, setResultMode] = useState("ai");
   const [accessCode, setAccessCode] = useState(() => { try { return sessionStorage.getItem("geekai_access_code") || ""; } catch { return ""; } });
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState(null);
@@ -234,18 +289,18 @@ export default function GeekAI() {
   const toggleAll = () => setSelectedPortals(selectedPortals.length === PORTALS.length ? [] : PORTALS.map(p => p.id));
   const handleSort = col => { if (sortBy === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(col); setSortDir(col === "title" || col === "portal" || col === "deadline" ? "asc" : "desc"); } };
 
-  // All Claude calls go through our own server function (api/messages.js),
-  // which holds the API key and checks the access code.
-  const callClaude = async (payload) => {
+  // All outside calls go through our own server functions (api/search.js for LangSearch,
+  // api/messages.js for Claude), which hold the API keys and check the access code.
+  const callApi = async (path, payload) => {
     try { sessionStorage.setItem("geekai_access_code", accessCode); } catch {}
-    const res = await fetch("/api/messages", {
+    const res = await fetch(path, {
       method:"POST",
       headers:{ "Content-Type":"application/json", "x-access-code":accessCode },
       body:JSON.stringify(payload)
     });
     let data;
     try { data = await res.json(); } catch { throw new Error(`Server returned ${res.status}`); }
-    if (data.error) throw new Error(data.error.message);
+    if (data.error) { const err = new Error(data.error.message); err.code = data.error.code; throw err; }
     return data;
   };
 
@@ -307,38 +362,90 @@ Search for real open tenders in Singapore (${new Date().getFullYear()}) matching
 
 Then return all real tenders found as a JSON array.`;
 
+    const year = new Date().getFullYear();
+    const queries = [
+      `${searchTerms} tender Singapore ${year}`,
+      `${searchTerms} invitation to quote Singapore`,
+      ...(category ? [`${category} ${searchTerms} tender Singapore`] : []),
+      ...selPortals.map(p => `${p.name} ${searchTerms} tender Singapore`),
+    ].slice(0, 16);
+
+    const extractPrompt = `You are a Singapore procurement sourcing analyst. You are given web search results as JSON (name, url, datePublished, text). Identify REAL procurement tenders, quotations or bid invitations in Singapore that appear to be currently open and that match the business profile.
+
+Use only information present in the search results. Do not invent tenders, deadlines, budgets or reference numbers: use null (or an empty string for refNo) when a detail is not in the text. Skip news articles, guides, awarded or closed notices, and generic portal home pages.
+
+Return ONLY a raw JSON array. Each object:
+{
+  "id": number,
+  "portal": "portal short name",
+  "title": "tender title as found",
+  "agency": "agency or buyer name",
+  "deadline": "YYYY-MM-DD or null if unknown",
+  "budget": integer SGD or null,
+  "category": "category string",
+  "relevance": 0-100,
+  "description": "what the tender is for, max 80 words",
+  "tags": ["tag1","tag2","tag3"],
+  "refNo": "reference number if found or empty string",
+  "sourceUrl": "the url of the search result this tender came from, copied exactly",
+  "aiReason": "why this matches the business, max 12 words",
+  "isReal": true
+}
+
+If nothing qualifies, return an empty array [].`;
+
+    const brief = `Today's date: ${new Date().toISOString().slice(0,10)}
+Business Profile: ${businessDesc}
+Keywords: ${searchTerms}
+Category: ${category || "all"}
+Budget preference: ${budget || "any"}
+Portals of interest: ${portalList}`;
+
     let generated = [];
+    let mode = "ai";
     try {
       setPhase("searching");
-      addLog("Searching public tender listings and scoring matches. This can take a few minutes.");
-      const data = await callClaude({
-        max_tokens:16000,
-        system:systemPrompt,
-        web_search:true,
-        messages:[{role:"user",content:userMsg}]
-      });
-
-      // Extract only text blocks (ignore tool_use/tool_result blocks)
-      const raw = (data.content || []).filter(c => c.type === "text").map(c => c.text || "").join("");
-      const searches = (data.content || []).filter(c => c.type === "server_tool_use" && c.name === "web_search").length;
-      addLog(`Response received: ${searches} web ${searches === 1 ? "search" : "searches"} run`);
-
-      const cleaned = raw.replace(/```json|```/g,"").trim();
-      const start = cleaned.indexOf("[");
-      const jsonStr = start >= 0 ? cleaned.slice(start) : "";
-
+      let pages = null;
       try {
-        generated = JSON.parse(jsonStr);
-      } catch {
-        addLog("Response was incomplete; recovering the complete records", "warn");
-        const salvaged = [];
-        for (const m of jsonStr.matchAll(/\{[^{}]*"id"\s*:\s*\d+[^{}]*\}/gs)) {
-          try { salvaged.push(JSON.parse(m[0])); } catch {}
-        }
-        if (salvaged.length === 0) throw new Error("The response could not be read as a list of tenders");
-        generated = salvaged;
+        addLog(`Searching the web with LangSearch (${queries.length} queries)`);
+        const s = await callApi("/api/search", { queries, freshness });
+        pages = s.results || [];
+        addLog(`${pages.length} ${pages.length === 1 ? "page" : "pages"} found${s.failed ? `; ${s.failed} of ${s.queries} queries failed` : ""}`);
+      } catch(e) {
+        if (e.code !== "search_not_configured") throw e;
+        addLog("LangSearch is not set up on the server; using Claude web search instead", "warn");
       }
-      if (!Array.isArray(generated)) generated = [];
+
+      if (pages === null) {
+        // Fallback: let Claude run its own web searches.
+        addLog("Searching public tender listings and scoring matches. This can take a few minutes.");
+        const data = await callApi("/api/messages", {
+          max_tokens:16000,
+          system:systemPrompt,
+          web_search:true,
+          messages:[{role:"user",content:userMsg}]
+        });
+        const searches = (data.content || []).filter(c => c.type === "server_tool_use" && c.name === "web_search").length;
+        addLog(`Response received: ${searches} web ${searches === 1 ? "search" : "searches"} run`);
+        generated = parseTenders(textOf(data), m => addLog(m, "warn"));
+      } else if (pages.length > 0) {
+        setPhase("scoring");
+        try {
+          addLog("Extracting tenders from the pages and scoring them against the profile");
+          const data = await callApi("/api/messages", {
+            max_tokens:16000,
+            system:extractPrompt,
+            messages:[{role:"user",content:`${brief}\n\nSearch results (JSON):\n${JSON.stringify(pages)}`}]
+          });
+          const known = new Set(pages.map(p => p.url));
+          generated = parseTenders(textOf(data), m => addLog(m, "warn")).map(o => ({ ...o, sourceUrl:known.has(o.sourceUrl) ? o.sourceUrl : null }));
+        } catch(e) {
+          if (e.code !== "ai_not_configured") throw e;
+          mode = "keyword";
+          addLog("AI scoring is not set up on the server; showing search results ranked by keyword overlap", "warn");
+          generated = pages.map(p => pageToRow(p, searchTerms));
+        }
+      }
     } catch(e) {
       setRunError(e.message);
       addLog(`Search failed: ${e.message}`, "warn");
@@ -357,19 +464,19 @@ Then return all real tenders found as a JSON array.`;
       addLog(`Top match: ${scored[0].title} (${scored[0].relevance}%)`, "ok");
     }
 
-    setResults(scored); setPhase("done"); setRunning(false); setLastRun(new Date());
+    setResults(scored); setResultMode(mode); setPhase("done"); setRunning(false); setLastRun(new Date());
     if (scored.length > 0) setActiveTab("results");
   };
 
   const generateDraft = async (opp) => {
     setDraftOpp(opp); setDraft(""); setDraftLoading(true); setCopied(false); setActiveTab("draft");
     try {
-      const data = await callClaude({
+      const data = await callApi("/api/messages", {
         max_tokens:4000,
         system:"You are a professional bid writer for a Singapore-based ecommerce company. Write formal expressions of interest following Singapore government/corporate procurement norms.",
         messages:[{role:"user", content:`Write a concise Expression of Interest for this Singapore procurement opportunity.\n\nOur Business: ${businessDesc}\nOpportunity: ${opp.title}\nAgency: ${opp.agency}\nBudget: ${Number(opp.budget) > 0 ? `SGD ${Number(opp.budget).toLocaleString()}` : "not stated"}\nRef: ${opp.refNo}\nDescription: ${opp.description}\n\n3 paragraphs: 1) Company intro & fit, 2) Capabilities & SG track record, 3) Professional closing. Under 260 words. Formal Singapore business tone.`}]
       });
-      setDraft((data.content||[]).filter(c=>c.type==="text").map(c=>c.text||"").join("").trim() || "No draft was returned. Please try again.");
+      setDraft(textOf(data).trim() || "No draft was returned. Please try again.");
     } catch(e) { setDraft(`The draft could not be generated: ${e.message}`); }
     setDraftLoading(false);
   };
@@ -470,6 +577,12 @@ Then return all real tenders found as a JSON array.`;
                   <label className="pa-lab" htmlFor="pa-budget">Budget range (SGD)</label>
                   <input id="pa-budget" className="pa-in" placeholder="50,000 to 500,000" value={budget} onChange={e => setBudget(e.target.value)} />
                 </div>
+                <div>
+                  <label className="pa-lab" htmlFor="pa-fresh">Published within</label>
+                  <select id="pa-fresh" className="pa-in" value={freshness} onChange={e => setFreshness(e.target.value)}>
+                    {FRESHNESS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+                  </select>
+                </div>
               </div>
             </section>
 
@@ -506,7 +619,7 @@ Then return all real tenders found as a JSON array.`;
             <div className="pa-toolbar" style={{marginTop:24}}>
               <button type="button" className="pa-btn primary" onClick={runAgent} disabled={!canRun}>{running ? "Searching…" : "Run search"}</button>
               <span className="pa-hint">
-                {!accessCode.trim() ? "Enter the access code to run a search." : selectedPortals.length === 0 ? "Select at least one portal." : "Searches public listings, then scores each tender against the profile."}
+                {!accessCode.trim() ? "Enter the access code to run a search." : selectedPortals.length === 0 ? "Select at least one portal." : "Searches the web with LangSearch, then scores each tender against the profile."}
               </span>
             </div>
           </div>
@@ -578,6 +691,9 @@ Then return all real tenders found as a JSON array.`;
               </section>
             ) : (
               <>
+                {resultMode === "keyword" && (
+                  <div className="pa-banner pa-info" role="status"><b>Search-only mode.</b> AI scoring is not set up on the server, so these are raw web search results ranked by how many of your keywords they contain. Deadlines, budgets and drafts are unavailable.</div>
+                )}
                 <section className="pa-card pa-stats">
                   <div className="pa-stat"><span>Opportunities</span><b className="num">{results.length}</b></div>
                   <div className="pa-stat"><span>High match ({HIGH_MATCH}%+)</span><b className="num">{highCount}</b></div>
@@ -629,7 +745,7 @@ Then return all real tenders found as a JSON array.`;
                               </td>
                               <td onClick={e => e.stopPropagation()}>
                                 <div className="pa-rowact">
-                                  <button type="button" className="pa-btn sm pa-hide-sm" onClick={() => generateDraft(opp)}>Draft</button>
+                                  {resultMode === "ai" && <button type="button" className="pa-btn sm pa-hide-sm" onClick={() => generateDraft(opp)}>Draft</button>}
                                   <button type="button" className="pa-btn sm" aria-expanded={open} onClick={() => setExpandedKey(open ? null : opp._key)}>{open ? "Hide" : "Details"}</button>
                                 </div>
                               </td>
@@ -651,7 +767,7 @@ Then return all real tenders found as a JSON array.`;
                                         <dt>Budget</dt><dd className="num">{fmtMoney(opp.budget)}</dd>
                                       </dl>
                                       <div className="pa-actions" style={{marginTop:16}}>
-                                        <button type="button" className="pa-btn sm primary" onClick={() => generateDraft(opp)}>Draft expression of interest</button>
+                                        {resultMode === "ai" && <button type="button" className="pa-btn sm primary" onClick={() => generateDraft(opp)}>Draft expression of interest</button>}
                                         {url && <a className="pa-btn sm" href={url} target="_blank" rel="noopener noreferrer">Open listing ↗</a>}
                                       </div>
                                     </div>
@@ -666,7 +782,11 @@ Then return all real tenders found as a JSON array.`;
                   </div>
                 </section>
 
-                <p className="pa-note">Listings and match scores are produced by an AI model from public web search. Confirm the title, deadline, budget and reference on the official portal before bidding.</p>
+                <p className="pa-note">
+                  {resultMode === "ai"
+                    ? "Listings and match scores are produced by an AI model from public web search. Confirm the title, deadline, budget and reference on the official portal before bidding."
+                    : "These are unfiltered web search results, so some will not be tenders. Open each listing to check it on the source site."}
+                </p>
               </>
             )}
           </div>
@@ -714,7 +834,7 @@ Then return all real tenders found as a JSON array.`;
         )}
       </main>
 
-      <footer className="pa-foot">GEEK-AI Procurement Intelligence · Singapore · Powered by Claude</footer>
+      <footer className="pa-foot">GEEK-AI Procurement Intelligence · Singapore · Search by LangSearch · Analysis by Claude</footer>
     </div>
   );
 }
