@@ -2,12 +2,12 @@
 
 An AI sourcing agent that finds open procurement tenders in Singapore, scores them against your business profile, and drafts an Expression of Interest for the ones worth bidding on.
 
-It is a single React component ([procurement-agent.jsx](procurement-agent.jsx)) powered by Claude with web search.
+It is a single React component ([procurement-agent.jsx](procurement-agent.jsx)) that searches the web with the free [LangSearch](https://github.com/langsearch-ai/langsearch) Web Search API and uses Claude to pick out and score the tenders.
 
 ## What it does
 
 1. **Configure** – Describe your business, add optional keywords, a category and a budget range, and choose which procurement portals to cover.
-2. **Run** – The agent asks Claude to search the web for currently open Singapore tenders that match, and records its progress in an activity log.
+2. **Run** – The agent searches the web for Singapore tenders that match, has Claude extract and score the ones that look open, and records its progress in an activity log.
 3. **Review** – Matching tenders appear in a sortable, filterable table with agency, budget, deadline, reference number, a 0–100% match score and a one-line reason for the match. Deadlines within 14 days are highlighted, and the list can be exported to CSV.
 4. **Draft** – One click generates a formal, three-paragraph Expression of Interest for any tender, which you can edit in place and copy.
 
@@ -29,36 +29,50 @@ The interface is deliberately plain: one neutral palette, light and dark themes 
 Business profile + keywords + portals
               │
               ▼
-   Claude (with web_search tool)  ──►  JSON list of tenders
-              │                         (title, agency, deadline, budget,
-              ▼                          relevance, source URL, ...)
+   LangSearch Web Search API  ──►  web pages (title, URL, text)
+              │
+              ▼
+   Claude  ──►  JSON list of tenders (title, agency, deadline,
+              │                       budget, relevance, source URL, ...)
+              ▼
    Results table  ──►  Claude  ──►  Expression of Interest draft
 ```
 
-- **Sourcing** – One request to the Anthropic Messages API (through `api/messages.js`) with the `web_search` tool. Claude runs several searches and returns a JSON array of tenders. If the response is cut off, complete records are salvaged from the partial output.
-- **Scoring** – Claude assigns each tender a relevance score and a short justification based on the business profile.
-- **Real results only** – Claude is told not to fabricate tenders, anything it marks as simulated is removed before display, and source links are shown only when they are ordinary web addresses.
+- **Searching** – `api/search.js` sends up to 16 queries (general ones plus one per selected portal) to the LangSearch Web Search API, filtered by the "Published within" setting, and merges the pages it returns.
+- **Extracting and scoring** – Claude reads those pages (through `api/messages.js`), keeps the ones that are real, open tenders, and gives each a relevance score and a short justification. If the response is cut off, complete records are salvaged from the partial output.
+- **Real results only** – Claude is told to use only what is in the search results and not to fabricate tenders. A source link is shown only if it is one of the pages LangSearch actually returned.
+
+The app adapts to which keys are set on the server:
+
+| Keys set | Behaviour |
+|---|---|
+| `LANGSEARCH_API_KEY` + `ANTHROPIC_API_KEY` | LangSearch searches, Claude extracts, scores and drafts (recommended) |
+| `LANGSEARCH_API_KEY` only | Search-only mode: raw LangSearch results ranked by keyword overlap, no AI scoring or drafts. Free to run |
+| `ANTHROPIC_API_KEY` only | Claude runs its own web searches with its `web_search` tool |
+
 - **Drafting** – A second Claude call writes the Expression of Interest in a formal Singapore business tone.
 
 ## Running it
 
-The repo is a small Vite + React app with one serverless function, ready to deploy on [Vercel](https://vercel.com):
+The repo is a small Vite + React app with two serverless functions, ready to deploy on [Vercel](https://vercel.com):
 
 | File | Purpose |
 |---|---|
 | `procurement-agent.jsx` | The whole user interface and agent logic |
+| `api/search.js` | Server function that runs web searches through the LangSearch API. It keeps the LangSearch key on the server and rejects callers without the access code |
 | `api/messages.js` | Server function that forwards requests to the Anthropic API. It keeps the API key on the server and rejects callers without the access code |
 | `src/main.jsx`, `index.html` | App entry point |
 
 ### Deploy on Vercel
 
 1. Import this repository as a new Vercel project (the Vite preset is detected automatically).
-2. Add two environment variables under **Settings → Environment Variables**:
+2. Add environment variables under **Settings → Environment Variables**:
+   - `ACCESS_CODE` (required) – any code you choose; visitors must enter it on the Search setup tab before the agent will run
+   - `LANGSEARCH_API_KEY` – a free key from the [LangSearch dashboard](https://langsearch.com/dashboard)
    - `ANTHROPIC_API_KEY` – an Anthropic API key from [platform.claude.com](https://platform.claude.com)
-   - `ACCESS_CODE` – any code you choose; visitors must enter it on the Configure tab before the agent will run
 3. Deploy. Optionally set `ANTHROPIC_MODEL` to change the Claude model (default `claude-sonnet-5-5`).
 
-Every run is billed to the API key's account, so share the access code only with people you trust.
+LangSearch's free plan has rate and daily usage limits. Claude usage is billed to the Anthropic key's account, so share the access code only with people you trust.
 
 ### Run locally
 
@@ -70,7 +84,7 @@ npm install
 npx vercel dev
 ```
 
-`vercel dev` serves both the app and the `/api/messages` function; put the two environment variables in a `.env` file (already git-ignored).
+`vercel dev` serves the app and both `/api` functions; put the environment variables in a `.env` file (already git-ignored).
 
 ## Limitations
 
