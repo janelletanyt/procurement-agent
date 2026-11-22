@@ -5,7 +5,8 @@
 // Each listing row already carries the title, reference, agency, category, closing date and a
 // direct link, so the individual tender pages do not need to be opened.
 //
-// It is deliberately gentle: at most 5 keywords per run, one at a time, first page of results only.
+// It is deliberately gentle: at most 5 keywords and 6 agency names per run, three at a time,
+// first page of results (10 tenders) only for each.
 //
 // Required environment variable:
 //   ACCESS_CODE – the code visitors must enter before the agent will run
@@ -15,6 +16,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 const ORIGIN = "https://www.gebiz.gov.sg";
 const LISTING = `${ORIGIN}/ptn/opportunity/BOListing.xhtml`;
 const MAX_KEYWORDS = 5;
+const MAX_AGENCIES = 6;
+const CONCURRENCY = 3;
 const PAUSE_MS = 400;
 const USER_AGENT = "Mozilla/5.0 (compatible; GEEK-AI-procurement-agent/1.0)";
 const MONTHS = { jan:"01", feb:"02", mar:"03", apr:"04", may:"05", jun:"06", jul:"07", aug:"08", sep:"09", oct:"10", nov:"11", dec:"12" };
@@ -149,22 +152,39 @@ export default async function handler(req, res) {
   if (!process.env.ACCESS_CODE) return fail(res, 500, "Server is not configured: set ACCESS_CODE in Vercel.", "not_configured");
   if (!codeMatches(req.headers["x-access-code"])) return fail(res, 401, "Wrong or missing access code.", "bad_access_code");
 
-  const keywords = [...new Set((Array.isArray(req.body?.keywords) ? req.body.keywords : [])
-    .filter((k) => typeof k === "string").map((k) => k.trim().slice(0, 60)).filter((k) => k.length >= 2))]
-    .slice(0, MAX_KEYWORDS);
-  if (keywords.length === 0) return fail(res, 400, "keywords is required");
+  const clean = (list, max) => [...new Set((Array.isArray(list) ? list : [])
+    .filter((k) => typeof k === "string").map((k) => k.trim().slice(0, 60)).filter((k) => k.length >= 2))].slice(0, max);
+  // "keywords" match tender titles; "agencies" are buyer names, which GeBIZ's search also matches.
+  const jobs = [
+    ...clean(req.body?.keywords, MAX_KEYWORDS).map((term) => ({ kind: "keyword", term })),
+    ...clean(req.body?.agencies, MAX_AGENCIES).map((term) => ({ kind: "agency", term })),
+  ];
+  if (jobs.length === 0) return fail(res, 400, "keywords or agencies is required");
+
+  // Each search has its own GeBIZ session, so a few can run side by side.
+  const outcomes = new Array(jobs.length);
+  let nextJob = 0;
+  const worker = async () => {
+    while (nextJob < jobs.length) {
+      const i = nextJob++;
+      if (i >= CONCURRENCY) await sleep(PAUSE_MS);
+      try { outcomes[i] = await searchKeyword(jobs[i].term); }
+      catch (e) { outcomes[i] = { error: String(e.message || e).slice(0, 160) }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, worker));
 
   const seen = new Set();
   const results = [];
   const detail = [];
-  for (const [i, keyword] of keywords.entries()) {
-    if (i > 0) await sleep(PAUSE_MS);
-    try {
-      const { items, openCount, closedCount } = await searchKeyword(keyword);
-      detail.push({ keyword, open: openCount, closed: closedCount, read: items.length, error: null });
-      for (const t of items) { if (seen.has(t.url)) continue; seen.add(t.url); results.push({ ...t, keyword }); }
-    } catch (e) {
-      detail.push({ keyword, open: 0, closed: null, read: 0, error: String(e.message || e).slice(0, 160) });
+  for (const [i, job] of jobs.entries()) {
+    const o = outcomes[i];
+    if (o.error) { detail.push({ kind: job.kind, keyword: job.term, open: 0, closed: null, read: 0, error: o.error }); continue; }
+    detail.push({ kind: job.kind, keyword: job.term, open: o.openCount, closed: o.closedCount, read: o.items.length, error: null });
+    for (const t of o.items) {
+      if (seen.has(t.url)) continue;
+      seen.add(t.url);
+      results.push({ ...t, keyword: job.kind === "keyword" ? job.term : "", agencyQuery: job.kind === "agency" ? job.term : "" });
     }
   }
   if (detail.every((d) => d.error)) return fail(res, 502, `GeBIZ search failed: ${detail[0].error}`, "gebiz_failed");
