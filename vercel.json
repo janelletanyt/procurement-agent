@@ -2,6 +2,7 @@
   "functions": {
     "api/messages.js": { "maxDuration": 300 },
     "api/search.js": { "maxDuration": 60 },
-    "api/gebiz.js": { "maxDuration": 60 }
+    "api/gebiz.js": { "maxDuration": 60 },
+    "api/ntu.js": { "maxDuration": 30 }
   }
 }
