@@ -39,6 +39,10 @@ Business profile + keywords + portals
 ```
 
 - **GeBIZ, read directly** – Web search engines cannot see inside GeBIZ's tender listing, so `api/gebiz.js` runs GeBIZ's own public keyword search (up to five keywords, one at a time, first page of results each) and reads the open opportunities from the result list: title, reference, agency, category, closing date and direct link. Government agencies and statutory boards (GovTech, MINDEF, HDB, JTC, SLA, CAAS) publish on GeBIZ, so selecting one of those portals filters the GeBIZ results to that buyer. This relies on the layout of GeBIZ's public page and will need updating if GeBIZ changes it; check GeBIZ's terms of use before heavy use.
+- **Agency portals, via GeBIZ** – For each selected agency portal, the same function also searches GeBIZ by the agency's name and reads its ten most recent open tenders.
+- **NTU, read directly** – `api/ntu.js` reads NTU's public list of open sourcing events from its supplier page.
+- **Portals that cannot be read** – Ariba, SingHealth/NHG, Tenderboard and Sesami only show tenders to signed-in suppliers, and NUS's list blocks automated access. For these the app can only web-search their public pages, and the Search details panel says so and links to each portal.
+- **Relevance cut-off** – Tenders that match a keyword are always shown. Tenders that were only browsed from a portal's list are shown when the AI scores them 40% or higher.
 - **Searching, on the selected portals only** – `api/search.js` sends two queries per selected portal to the LangSearch Web Search API, each restricted to that portal's own web domains and filtered by the "Published within" setting. Pages from any other site are discarded.
 - **Extracting and scoring** – Claude reads those pages (through `api/messages.js`) and keeps only specific, open tenders from Singapore buyers that are relevant to the business and have enough detail to act on. Each gets a relevance score, a short justification and a suggested next step. If the response is cut off, complete records are salvaged from the partial output.
 - **Real results only** – Claude is told to use only what is in the search results and not to fabricate tenders. A tender is shown only if it links to a page LangSearch actually returned from a selected portal, and tenders whose closing date has passed are dropped.
@@ -64,6 +68,7 @@ The repo is a small Vite + React app with two serverless functions, ready to dep
 |---|---|
 | `procurement-agent.jsx` | The whole user interface and agent logic |
 | `api/gebiz.js` | Server function that searches GeBIZ's public open-tender listing directly. Needs no API key |
+| `api/ntu.js` | Server function that reads NTU's public list of open sourcing events. Needs no API key |
 | `api/search.js` | Server function that runs web searches through the LangSearch API. It keeps the LangSearch key on the server and rejects callers without the access code |
 | `api/messages.js` | Server function that sends AI requests to Gemini or Claude. It keeps the API keys on the server and rejects callers without the access code |
 | `src/main.jsx`, `index.html` | App entry point |
